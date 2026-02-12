@@ -1,0 +1,22 @@
+const mongoose=require("mongoose");
+
+
+module.exports=mongoose.model("User",new mongoose.Schema({
+email:String,
+password:String,
+phone:String,
+address:String,
+country:String,
+
+
+balance:{type:Number,default:0},
+credit:{type:Number,default:0},
+leverage:{type:Number,default:1},
+
+
+blocked:{type:Boolean,default:false},
+
+
+kycStatus:{type:String,default:"pending"},
+kycDocs:[String]
+}));
