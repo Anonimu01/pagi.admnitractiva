@@ -1,0 +1,10 @@
+const mongoose=require("mongoose");
+
+
+module.exports=mongoose.model("History",new mongoose.Schema({
+userId:String,
+type:String,
+amount:Number,
+note:String,
+date:{type:Date,default:Date.now}
+}));
