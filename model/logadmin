@@ -1,0 +1,9 @@
+const mongoose=require("mongoose");
+
+
+module.exports=mongoose.model("AdminLog",new mongoose.Schema({
+action:String,
+admin:String,
+ip:String,
+time:{type:Date,default:Date.now}
+}));
