@@ -1,0 +1,78 @@
+const router=require("express").Router();
+// BALANCE
+router.post("/update-balance",auth,async(req,res)=>{
+const {userId,balance}=req.body;
+const user=await User.findById(userId);
+user.balance=Number(balance);
+await user.save();
+
+
+await History.create({userId,type:"admin_balance",amount:balance});
+log(req,"update balance "+userId);
+
+
+req.app.get("io").emit("balanceUpdate",user);
+res.json({ok:true});
+});
+
+
+// LEVERAGE
+router.post("/update-leverage",auth,async(req,res)=>{
+const {userId,leverage}=req.body;
+const user=await User.findById(userId);
+user.leverage=Number(leverage);
+await user.save();
+
+
+log(req,"update leverage "+userId);
+res.json({ok:true});
+});
+
+
+// BLOCK USER
+router.post("/block-user",auth,async(req,res)=>{
+const user=await User.findById(req.body.userId);
+user.blocked=true;
+await user.save();
+log(req,"block user "+user.id);
+res.json({ok:true});
+});
+
+
+// WITHDRAWS USER
+router.get("/withdraws/:userId",auth,async(req,res)=>{
+res.json(await Withdraw.find({userId:req.params.userId,status:"pending"}));
+});
+
+
+// APPROVE
+router.post("/withdraw/approve",auth,async(req,res)=>{
+const w=await Withdraw.findById(req.body.id);
+w.status="approved";
+await w.save();
+
+
+const user=await User.findById(w.userId);
+user.balance-=w.amount;
+await user.save();
+
+
+await History.create({userId:user.id,type:"withdraw",amount:w.amount});
+log(req,"approve withdraw "+w.id);
+
+
+res.json({ok:true});
+});
+
+
+// REJECT
+router.post("/withdraw/reject",auth,async(req,res)=>{
+const w=await Withdraw.findById(req.body.id);
+w.status="rejected";
+await w.save();
+log(req,"reject withdraw "+w.id);
+res.json({ok:true});
+});
+
+
+module.exports=router;
