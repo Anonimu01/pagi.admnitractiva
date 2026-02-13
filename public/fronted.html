@@ -1,192 +1,304 @@
-<script>
-const API = 'https://TU-APP.onrender.com/api'; // ← CAMBIA ESTO
-const token = localStorage.getItem('admin_token');
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Admin — Control Total</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-if(!token){
-  alert('Acceso no autorizado');
-  location.href='login.html';
+<script src="https://s3.tradingview.com/tv.js"></script>
+
+<style>
+body{
+margin:0;
+font-family:Inter,Arial;
+background:#0b0b0b;
+color:#eaeaea;
 }
+header{
+padding:16px;
+background:#111;
+border-bottom:1px solid #222;
+font-size:18px;
+font-weight:900;
+color:#d4af37;
+display:flex;
+justify-content:space-between;
+align-items:center;
+}
+.logout{
+background:#b83a3a;
+border:none;
+padding:8px 14px;
+border-radius:8px;
+color:white;
+cursor:pointer;
+}
+.layout{
+display:grid;
+grid-template-columns:300px 1fr;
+height:calc(100vh - 60px);
+}
+.sidebar{
+border-right:1px solid #222;
+overflow:auto;
+}
+.sidebar div{
+padding:12px;
+cursor:pointer;
+border-bottom:1px solid #1a1a1a;
+}
+.sidebar div:hover{background:#151515;}
+.main{padding:20px;overflow:auto;}
+.card{
+background:#111;
+padding:16px;
+border-radius:12px;
+margin-bottom:16px;
+box-shadow:0 0 0 1px #1c1c1c;
+}
+input,select,button{
+background:#0f0f0f;
+color:#fff;
+border:1px solid #333;
+padding:8px;
+border-radius:6px;
+}
+button{cursor:pointer;font-weight:800;}
+.primary{background:#d4af37;color:#000}
+.danger{background:#b83a3a}
+.status{
+font-size:12px;
+margin-top:8px;
+color:#888;
+}
+.center{text-align:center;color:#777;margin-top:50px;}
+.loader{text-align:center;padding:30px;color:#888;}
+</style>
+</head>
 
-const headers = {
-  'Content-Type':'application/json',
-  'Authorization':'Bearer '+token
+<body>
+
+<header>
+<span>🧑‍💼 PANEL ADMINISTRACIÓN</span>
+<button class="logout" onclick="logout()">Cerrar sesión</button>
+</header>
+
+<div class="layout">
+
+<div class="sidebar" id="usersList">
+<div class="loader">Cargando usuarios...</div>
+</div>
+
+<div class="main" id="profilePanel">
+<div class="center">Selecciona un usuario</div>
+</div>
+
+</div>
+
+<script>
+
+/* ================= API AUTO ================= */
+const API = location.hostname.includes("render.com")
+? location.origin + "/api"
+: "http://localhost:4000/api";
+
+/* ================= TOKEN ================= */
+const token = localStorage.getItem("admin_token");
+if(!token){ location.href="login.html"; }
+
+const headers={
+"Content-Type":"application/json",
+"Authorization":"Bearer "+token
 };
 
-let currentUser = null;
-let tvWidget = null;
+let currentUser=null;
+let tvWidget=null;
+let saveTimeout=null;
 
-// ================== CARGAR USUARIOS ==================
+/* ================= SAFE FETCH ================= */
+async function safeFetch(url,opt={}){
+try{
+const r=await fetch(url,opt);
+if(r.status===401) logout();
+return await r.json();
+}catch(err){
+alert("Error servidor");
+console.error(err);
+}
+}
+
+/* ================= USERS ================= */
 async function loadUsers(){
-  try{
-    const res = await fetch(API+'/admin/users',{headers});
-    if(!res.ok) throw new Error('Error servidor');
+const list=document.getElementById("usersList");
+list.innerHTML='<div class="loader">Cargando...</div>';
 
-    const users = await res.json();
-    const list = document.getElementById('usersList');
-    list.innerHTML = '';
+const users=await safeFetch(API+"/admin/users",{headers});
+if(!users)return;
 
-    if(!users.length){
-      list.innerHTML='<div style="color:#777">No hay usuarios</div>';
-      return;
-    }
-
-    users.forEach(u=>{
-      const div = document.createElement('div');
-      div.innerHTML = `<strong>${u.email}</strong><br><span style="color:#777">Saldo: ${u.balance}</span>`;
-      div.onclick = ()=> openUser(u);
-      list.appendChild(div);
-    });
-
-  }catch(err){
-    document.getElementById('usersList').innerHTML =
-    `<div style="color:#b83a3a">Error conectando API</div>`;
-    console.error(err);
-  }
+list.innerHTML="";
+users.forEach(u=>{
+const div=document.createElement("div");
+div.innerHTML=`<strong>${u.email}</strong><br>
+<span style="color:#777">Saldo: ${u.balance}</span>`;
+div.onclick=()=>openUser(u);
+list.appendChild(div);
+});
 }
 
-// ================== PERFIL ==================
+/* ================= OPEN USER ================= */
 function openUser(u){
-  currentUser = u;
+currentUser=u;
 
-  document.getElementById('profilePanel').innerHTML = `
-    <div class="card">
-      <h2>${u.email}</h2>
-      <p>ID: ${u._id}</p>
-    </div>
+document.getElementById("profilePanel").innerHTML=`
 
-    <div class="card">
-      <label>Saldo (USDT)</label><br>
-      <input id="balance" type="number" value="${u.balance}">
-      <button class="primary" onclick="updateBalance()">Actualizar saldo</button>
-    </div>
+<div class="card">
+<h2>${u.email}</h2>
+<p>ID: ${u._id}</p>
+</div>
 
-    <div class="card">
-      <label>Apalancamiento</label><br>
-      <select id="leverage">
-        <option ${u.leverage==1?'selected':''}>1</option>
-        <option ${u.leverage==5?'selected':''}>5</option>
-        <option ${u.leverage==10?'selected':''}>10</option>
-        <option ${u.leverage==20?'selected':''}>20</option>
-        <option ${u.leverage==50?'selected':''}>50</option>
-      </select>
-      <button class="primary" onclick="updateLeverage()">Guardar leverage</button>
-    </div>
+<div class="card">
+<label>Saldo</label><br>
+<input id="balance" type="number" value="${u.balance}" oninput="autoSaveBalance()">
+<br><br>
+<button class="primary" onclick="saveBalance()">Guardar ahora</button>
+<div class="status" id="balanceStatus"></div>
+</div>
 
-    <div class="card">
-      <label>Símbolo TradingView</label><br>
-      <input id="symbolInput" value="BINANCE:BTCUSDT">
-      <button class="primary" onclick="loadChart()">Cargar gráfico</button>
-    </div>
+<div class="card">
+<label>Leverage</label><br>
+<select id="leverage" onchange="saveLeverage()">
+${[1,5,10,20,50].map(n=>`<option ${u.leverage==n?"selected":""}>${n}</option>`).join("")}
+</select>
+<div class="status" id="levStatus"></div>
+</div>
 
-    <div class="card">
-      <div id="tv_chart" style="height:420px"></div>
-    </div>
+<div class="card">
+<label>Símbolo</label><br>
+<input id="symbolInput" value="BINANCE:BTCUSDT">
+<button class="primary" onclick="loadChart()">Cargar gráfico</button>
+</div>
 
-    <div class="card">
-      <h3>Retiros pendientes</h3>
-      <div id="withdraws">Cargando...</div>
-    </div>
-  `;
+<div class="card">
+<div id="tv_chart" style="height:420px"></div>
+</div>
 
-  loadWithdraws(u._id);
-  setTimeout(loadChart,300);
+<div class="card">
+<h3>Retiros pendientes</h3>
+<div id="withdraws">Cargando...</div>
+</div>
+`;
+
+loadWithdraws(u._id);
+setTimeout(loadChart,200);
 }
 
-// ================== TRADINGVIEW ==================
+/* ================= AUTO SAVE BALANCE ================= */
+function autoSaveBalance(){
+clearTimeout(saveTimeout);
+document.getElementById("balanceStatus").innerText="Guardando...";
+saveTimeout=setTimeout(saveBalance,800);
+}
+
+async function saveBalance(){
+const balance=document.getElementById("balance").value;
+
+await safeFetch(API+"/admin/update-balance",{
+method:"POST",
+headers,
+body:JSON.stringify({userId:currentUser._id,balance})
+});
+
+document.getElementById("balanceStatus").innerText="✔ Guardado";
+loadUsers();
+}
+
+/* ================= LEVERAGE ================= */
+async function saveLeverage(){
+const lev=document.getElementById("leverage").value;
+document.getElementById("levStatus").innerText="Guardando...";
+
+await safeFetch(API+"/admin/update-leverage",{
+method:"POST",
+headers,
+body:JSON.stringify({userId:currentUser._id,leverage:lev})
+});
+
+document.getElementById("levStatus").innerText="✔ Guardado";
+loadUsers();
+}
+
+/* ================= CHART ================= */
 function loadChart(){
-  const symbol = document.getElementById('symbolInput').value;
+const symbol=document.getElementById("symbolInput").value;
+if(tvWidget) tvWidget.remove();
 
-  if(tvWidget){
-    tvWidget.remove();
-  }
-
-  tvWidget = new TradingView.widget({
-    container_id:"tv_chart",
-    symbol,
-    interval:"15",
-    timezone:"Etc/UTC",
-    theme:"dark",
-    style:"1",
-    locale:"es",
-    toolbar_bg:"#111",
-    enable_publishing:false,
-    allow_symbol_change:true,
-    height:420
-  });
+tvWidget=new TradingView.widget({
+container_id:"tv_chart",
+symbol,
+interval:"15",
+theme:"dark",
+style:"1",
+locale:"es",
+toolbar_bg:"#111",
+enable_publishing:false,
+allow_symbol_change:true,
+height:420
+});
 }
 
-// ================== UPDATE BALANCE ==================
-async function updateBalance(){
-  const balance = document.getElementById('balance').value;
+/* ================= WITHDRAWS ================= */
+async function loadWithdraws(id){
+const box=document.getElementById("withdraws");
+box.innerHTML="Cargando...";
 
-  await fetch(API+'/admin/update-balance',{
-    method:'POST',
-    headers,
-    body:JSON.stringify({userId:currentUser._id,balance})
-  });
+const data=await safeFetch(API+"/admin/withdraws/"+id,{headers});
+if(!data)return;
 
-  alert('Saldo actualizado');
-  loadUsers();
+box.innerHTML="";
+if(!data.length){
+box.innerHTML='<span style="color:#777">Sin solicitudes</span>';
+return;
 }
 
-// ================== UPDATE LEVERAGE ==================
-async function updateLeverage(){
-  const leverage = document.getElementById('leverage').value;
-
-  await fetch(API+'/admin/update-leverage',{
-    method:'POST',
-    headers,
-    body:JSON.stringify({userId:currentUser._id,leverage})
-  });
-
-  alert('Apalancamiento actualizado');
-  loadUsers();
-}
-
-// ================== RETIROS ==================
-async function loadWithdraws(userId){
-  const res = await fetch(API+'/admin/withdraws/'+userId,{headers});
-  const data = await res.json();
-  const box = document.getElementById('withdraws');
-  box.innerHTML='';
-
-  if(!data.length){
-    box.innerHTML='<div style="color:#777">No hay solicitudes</div>';
-    return;
-  }
-
-  data.forEach(w=>{
-    const div=document.createElement('div');
-    div.className='card';
-    div.innerHTML=`
-      <p>Monto: ${w.amount}</p>
-      <button class="primary" onclick="approveWithdraw('${w._id}')">Aprobar</button>
-      <button class="danger" onclick="rejectWithdraw('${w._id}')">Rechazar</button>
-    `;
-    box.appendChild(div);
-  });
+data.forEach(w=>{
+const div=document.createElement("div");
+div.className="card";
+div.innerHTML=`
+<p>Monto: ${w.amount}</p>
+<button class="primary" onclick="approveWithdraw('${w._id}')">Aprobar</button>
+<button class="danger" onclick="rejectWithdraw('${w._id}')">Rechazar</button>
+`;
+box.appendChild(div);
+});
 }
 
 async function approveWithdraw(id){
-  await fetch(API+'/admin/withdraw/approve',{
-    method:'POST',
-    headers,
-    body:JSON.stringify({id})
-  });
-  alert('Retiro aprobado');
-  loadWithdraws(currentUser._id);
+await safeFetch(API+"/admin/withdraw/approve",{
+method:"POST",
+headers,
+body:JSON.stringify({id})
+});
+loadWithdraws(currentUser._id);
 }
 
 async function rejectWithdraw(id){
-  await fetch(API+'/admin/withdraw/reject',{
-    method:'POST',
-    headers,
-    body:JSON.stringify({id})
-  });
-  alert('Retiro rechazado');
-  loadWithdraws(currentUser._id);
+await safeFetch(API+"/admin/withdraw/reject",{
+method:"POST",
+headers,
+body:JSON.stringify({id})
+});
+loadWithdraws(currentUser._id);
 }
 
-// INIT
+/* ================= LOGOUT ================= */
+function logout(){
+localStorage.removeItem("admin_token");
+location.href="login.html";
+}
+
+/* ================= INIT ================= */
 loadUsers();
+
 </script>
+</body>
+</html>
