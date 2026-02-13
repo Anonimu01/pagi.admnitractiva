@@ -5,7 +5,6 @@
 <title>Admin — Control Total</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!-- TradingView -->
 <script src="https://s3.tradingview.com/tv.js"></script>
 
 <style>
@@ -69,23 +68,13 @@ input,select,button{
   padding:8px;
   border-radius:6px;
 }
-button{
-  cursor:pointer;
-  font-weight:800;
-}
+button{cursor:pointer;font-weight:800}
 .primary{background:#d4af37;color:#000}
 .danger{background:#b83a3a}
 label{font-size:13px;color:#aaa}
-.center{
-  text-align:center;
-  color:#777;
-  margin-top:50px;
-}
-.loader{
-  text-align:center;
-  padding:30px;
-  color:#888;
-}
+.center{text-align:center;color:#777;margin-top:50px}
+.loader{text-align:center;padding:30px;color:#888}
+.error{color:#ff6b6b;text-align:center;margin-top:20px}
 </style>
 </head>
 
@@ -109,6 +98,7 @@ label{font-size:13px;color:#aaa}
 </div>
 
 <script>
+
 /* ================= API AUTO DETECT ================= */
 const API = location.hostname.includes("render.com")
 ? location.origin + "/api"
@@ -118,7 +108,6 @@ const API = location.hostname.includes("render.com")
 const token = localStorage.getItem("admin_token");
 
 if(!token){
-  alert("Debes iniciar sesión");
   location.href="login.html";
 }
 
@@ -130,23 +119,33 @@ const headers = {
 let currentUser=null;
 let tvWidget=null;
 
-/* ================= FETCH SAFE ================= */
+/* ================= FETCH SEGURO ================= */
 async function safeFetch(url,options={}){
   try{
     const res=await fetch(url,options);
+
     if(res.status===401){
       logout();
-      return;
+      return null;
     }
+
+    if(!res.ok){
+      throw new Error("Error servidor");
+    }
+
     return await res.json();
+
   }catch(e){
-    alert("Error conexión servidor");
     console.error(e);
+    document.getElementById("profilePanel").innerHTML=
+      `<div class="error">Error conectando al servidor</div>`;
+    return null;
   }
 }
 
-/* ================= USERS ================= */
+/* ================= CARGAR USUARIOS ================= */
 async function loadUsers(){
+
   const list=document.getElementById("usersList");
   list.innerHTML='<div class="loader">Cargando...</div>';
 
@@ -154,6 +153,11 @@ async function loadUsers(){
   if(!users)return;
 
   list.innerHTML="";
+
+  if(users.length===0){
+    list.innerHTML='<div class="center">No hay usuarios</div>';
+    return;
+  }
 
   users.forEach(u=>{
     const div=document.createElement("div");
@@ -166,8 +170,9 @@ async function loadUsers(){
   });
 }
 
-/* ================= PROFILE ================= */
+/* ================= PERFIL ================= */
 function openUser(u){
+
   currentUser=u;
 
   document.getElementById("profilePanel").innerHTML=`
@@ -192,7 +197,7 @@ ${[1,5,10,20,50].map(n=>`<option ${u.leverage==n?"selected":""}>${n}</option>`).
 </div>
 
 <div class="card">
-<label>Símbolo</label><br>
+<label>Símbolo gráfico</label><br>
 <input id="symbolInput" value="BINANCE:BTCUSDT">
 <button class="primary" onclick="loadChart()">Cargar gráfico</button>
 </div>
@@ -208,13 +213,12 @@ ${[1,5,10,20,50].map(n=>`<option ${u.leverage==n?"selected":""}>${n}</option>`).
 `;
 
   loadWithdraws(u._id);
-  setTimeout(loadChart,200);
+  setTimeout(loadChart,300);
 }
 
 /* ================= CHART ================= */
 function loadChart(){
   const symbol=document.getElementById("symbolInput").value;
-
   if(tvWidget) tvWidget.remove();
 
   tvWidget=new TradingView.widget({
@@ -232,7 +236,7 @@ function loadChart(){
   });
 }
 
-/* ================= BALANCE ================= */
+/* ================= ACTUALIZAR SALDO ================= */
 async function updateBalance(){
   const balance=document.getElementById("balance").value;
 
@@ -245,7 +249,6 @@ async function updateBalance(){
     })
   });
 
-  alert("Saldo actualizado");
   loadUsers();
 }
 
@@ -262,12 +265,12 @@ async function updateLeverage(){
     })
   });
 
-  alert("Leverage actualizado");
   loadUsers();
 }
 
-/* ================= WITHDRAWS ================= */
+/* ================= RETIROS ================= */
 async function loadWithdraws(id){
+
   const box=document.getElementById("withdraws");
   box.innerHTML="Cargando...";
 
@@ -319,6 +322,7 @@ function logout(){
 
 /* ================= INIT ================= */
 loadUsers();
+
 </script>
 
 </body>
