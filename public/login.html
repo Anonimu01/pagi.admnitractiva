@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Login Admin</title>
+<style>
+body{
+margin:0;
+font-family:Arial;
+background:#020617;
+display:flex;
+justify-content:center;
+align-items:center;
+height:100vh;
+color:white;
+}
+.box{
+background:#111827;
+padding:40px;
+border-radius:16px;
+width:300px;
+box-shadow:0 0 20px rgba(0,0,0,.6);
+}
+input{
+width:100%;
+margin-top:10px;
+padding:12px;
+border:none;
+border-radius:8px;
+background:#020617;
+color:white;
+}
+button{
+width:100%;
+margin-top:20px;
+padding:12px;
+border:none;
+border-radius:10px;
+background:#22c55e;
+font-weight:bold;
+cursor:pointer;
+}
+button:hover{
+background:#16a34a;
+}
+</style>
+</head>
+<body>
+
+<div class="box">
+<h2>Panel Admin</h2>
+
+<input id="email" placeholder="Correo">
+<input id="pass" type="password" placeholder="Contraseña">
+
+<button onclick="login()">Entrar</button>
+<p id="msg"></p>
+</div>
+
+<script>
+const API = location.hostname.includes("render.com")
+? location.origin + "/api"
+: "http://localhost:4000/api";
+
+async function login(){
+const email=document.getElementById("email").value;
+const password=document.getElementById("pass").value;
+
+const res=await fetch(API+"/admin/login",{
+method:"POST",
+headers:{ "Content-Type":"application/json" },
+body:JSON.stringify({email,password})
+});
+
+const data=await res.json();
+
+if(data.token){
+localStorage.setItem("admin_token",data.token);
+location.href="admin.html";
+}else{
+document.getElementById("msg").innerText=data.msg||"Error login";
+}
+}
+</script>
+
+</body>
+</html>
