@@ -75,6 +75,7 @@ label{font-size:13px;color:#aaa}
 .center{text-align:center;color:#777;margin-top:50px}
 .loader{text-align:center;padding:30px;color:#888}
 .error{color:#ff6b6b;text-align:center;margin-top:20px}
+.small{font-size:12px;color:#999}
 </style>
 </head>
 
@@ -100,224 +101,328 @@ label{font-size:13px;color:#aaa}
 <script>
 
 /* ================= API AUTO DETECT ================= */
+/* Detecta si estás en Render (deploy) o en local y arma la base /api */
 const API = location.hostname.includes("render.com")
-? location.origin + "/api"
-: "http://localhost:4000/api";
+  ? location.origin + "/api"
+  : "http://localhost:4000/api";
 
-/* ================= TOKEN ================= */
-const token = localStorage.getItem("admin_token");
+/* ================= TOKEN (soporta admin_token o token) ================= */
+/* Si no existe token redirige a login (no exponemos keys al frontend) */
+const token = localStorage.getItem("admin_token") || localStorage.getItem("token");
 
 if(!token){
-  location.href="login.html";
+  // si no hay token, redirige a login del panel admin
+  location.href = "login.html";
 }
 
+/* headers dinámicos (sólo añadimos Authorization si tenemos token) */
 const headers = {
-  "Content-Type":"application/json",
-  "Authorization":"Bearer "+token
+  "Content-Type": "application/json",
+  ...(token ? { "Authorization": "Bearer " + token } : {})
 };
 
-let currentUser=null;
-let tvWidget=null;
+let currentUser = null;
+let tvWidget = null;
 
-/* ================= FETCH SEGURO ================= */
-async function safeFetch(url,options={}){
+/* ================= safeFetch: manejo robusto de respuestas ================= */
+async function safeFetch(url, options = {}){
   try{
-    const res=await fetch(url,options);
+    const opt = Object.assign({}, options);
+    opt.headers = Object.assign({}, headers, options.headers || {});
 
-    if(res.status===401){
+    const res = await fetch(url, opt);
+
+    // Si es 401 -> logout automático
+    if(res.status === 401){
       logout();
       return null;
     }
 
-    if(!res.ok){
-      throw new Error("Error servidor");
+    // Intentar parseo seguro; algunos endpoints devuelven 204 No Content
+    if(res.status === 204) return {};
+
+    let json = null;
+    try {
+      json = await res.json();
+    } catch(parseErr){
+      // si no es JSON devolvemos texto
+      try{
+        const txt = await res.text();
+        return txt;
+      }catch(e){
+        return null;
+      }
     }
 
-    return await res.json();
+    if(!res.ok){
+      // si la API devuelve objeto con detalles, lo mostramos en consola y UI
+      console.error('API error', res.status, json);
+      // mostrar mensaje en panel principal si existe
+      document.getElementById("profilePanel").innerHTML =
+        `<div class="error">Error del servidor: ${json?.msg || res.statusText}</div>`;
+      return null;
+    }
+
+    return json;
 
   }catch(e){
-    console.error(e);
-    document.getElementById("profilePanel").innerHTML=
+    console.error("Network error:", e);
+    document.getElementById("profilePanel").innerHTML =
       `<div class="error">Error conectando al servidor</div>`;
     return null;
   }
 }
 
+/* ================= utilidad: extraer array de usuarios de respuestas variadas ================= */
+function extractUsersFromResponse(resp){
+  if(!resp) return null;
+  if(Array.isArray(resp)) return resp;
+  if(resp.users && Array.isArray(resp.users)) return resp.users;
+  if(resp.data && Array.isArray(resp.data)) return resp.data;
+  if(resp.result && Array.isArray(resp.result)) return resp.result;
+  // si la respuesta misma tiene ok:true y users en otro nivel
+  if(resp.ok && Array.isArray(resp.users)) return resp.users;
+  return null;
+}
+
 /* ================= CARGAR USUARIOS ================= */
 async function loadUsers(){
 
-  const list=document.getElementById("usersList");
-  list.innerHTML='<div class="loader">Cargando...</div>';
+  const list = document.getElementById("usersList");
+  list.innerHTML = '<div class="loader">Cargando...</div>';
 
-  const users=await safeFetch(API+"/admin/users",{headers});
-  if(!users)return;
+  const resp = await safeFetch(API + "/admin/users", { headers });
+  if(!resp) return;
 
-  list.innerHTML="";
+  const users = extractUsersFromResponse(resp);
+  if(!users){
+    // Si la respuesta no tiene users, mostramos la estructura para debugging
+    list.innerHTML = `<div class="error">Respuesta inesperada del servidor. Revisa la consola.</div>`;
+    console.warn('Respuesta /admin/users:', resp);
+    return;
+  }
 
-  if(users.length===0){
-    list.innerHTML='<div class="center">No hay usuarios</div>';
+  list.innerHTML = "";
+
+  if(users.length === 0){
+    list.innerHTML = '<div class="center">No hay usuarios</div>';
     return;
   }
 
   users.forEach(u=>{
-    const div=document.createElement("div");
-    div.innerHTML=`
-      <strong>${u.email}</strong><br>
-      <span style="color:#777">Saldo: ${u.balance}</span>
+    const div = document.createElement("div");
+    const bal = (typeof u.balance !== "undefined") ? u.balance : 0;
+    const email = u.email || u.emailAddress || u.correo || "sin-email";
+    div.innerHTML = `
+      <strong class="small">${escapeHtml(email)}</strong><br>
+      <span class="small">Saldo: ${escapeHtml(String(bal))}</span>
     `;
-    div.onclick=()=>openUser(u);
+    div.onclick = ()=> openUser(u);
     list.appendChild(div);
+  });
+}
+
+/* ================= ESCAPE HTML PARA PREVENIR XSS ================= */
+function escapeHtml(s){
+  return String(s || '').replace(/[&<>"']/g, function(m){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
   });
 }
 
 /* ================= PERFIL ================= */
 function openUser(u){
 
-  currentUser=u;
+  currentUser = u;
 
-  document.getElementById("profilePanel").innerHTML=`
+  const userEmail = escapeHtml(u.email || u.emailAddress || u.correo || "");
+  const userId = escapeHtml(u._id || u.id || "");
+  const userBalance = typeof u.balance !== 'undefined' ? u.balance : 0;
+  const userLeverage = typeof u.leverage !== 'undefined' ? u.leverage : 1;
+
+  document.getElementById("profilePanel").innerHTML = `
 
 <div class="card">
-<h2>${u.email}</h2>
-<p>ID: ${u._id}</p>
+  <h2>${userEmail}</h2>
+  <p class="small">ID: ${userId}</p>
 </div>
 
 <div class="card">
-<label>Saldo</label><br>
-<input id="balance" type="number" value="${u.balance}">
-<button class="primary" onclick="updateBalance()">Actualizar</button>
+  <label>Saldo</label><br>
+  <input id="balance" type="number" value="${escapeHtml(String(userBalance))}">
+  <button class="primary" onclick="updateBalance()">Actualizar</button>
 </div>
 
 <div class="card">
-<label>Leverage</label><br>
-<select id="leverage">
-${[1,5,10,20,50].map(n=>`<option ${u.leverage==n?"selected":""}>${n}</option>`).join("")}
-</select>
-<button class="primary" onclick="updateLeverage()">Guardar</button>
+  <label>Leverage</label><br>
+  <select id="leverage">
+    ${[1,5,10,20,50].map(n=>`<option value="${n}" ${Number(userLeverage)===Number(n)?"selected":""}>${n}</option>`).join("")}
+  </select>
+  <button class="primary" onclick="updateLeverage()">Guardar</button>
 </div>
 
 <div class="card">
-<label>Símbolo gráfico</label><br>
-<input id="symbolInput" value="BINANCE:BTCUSDT">
-<button class="primary" onclick="loadChart()">Cargar gráfico</button>
+  <label>Símbolo gráfico</label><br>
+  <input id="symbolInput" value="BINANCE:BTCUSDT">
+  <button class="primary" onclick="loadChart()">Cargar gráfico</button>
 </div>
 
 <div class="card">
-<div id="tv_chart" style="height:420px"></div>
+  <div id="tv_chart" style="height:420px"></div>
 </div>
 
 <div class="card">
-<h3>Retiros pendientes</h3>
-<div id="withdraws">Cargando...</div>
+  <h3>Retiros pendientes</h3>
+  <div id="withdraws">Cargando...</div>
 </div>
 `;
 
-  loadWithdraws(u._id);
-  setTimeout(loadChart,300);
+  loadWithdraws(u._id || u.id);
+  // carga el chart un poco después para asegurar que el contenedor exista
+  setTimeout(loadChart, 300);
 }
 
-/* ================= CHART ================= */
+/* ================= CHART (TradingView) ================= */
 function loadChart(){
-  const symbol=document.getElementById("symbolInput").value;
-  if(tvWidget) tvWidget.remove();
+  const symbolEl = document.getElementById("symbolInput");
+  if(!symbolEl) return;
+  const symbol = symbolEl.value || "BINANCE:BTCUSDT";
 
-  tvWidget=new TradingView.widget({
-    container_id:"tv_chart",
-    symbol,
-    interval:"15",
-    timezone:"Etc/UTC",
-    theme:"dark",
-    style:"1",
-    locale:"es",
-    toolbar_bg:"#111",
-    enable_publishing:false,
-    allow_symbol_change:true,
-    height:420
-  });
+  // eliminar widget anterior si existe (TradingView provee 'remove' en algunos entornos)
+  try{
+    if(tvWidget && typeof tvWidget.remove === "function"){
+      tvWidget.remove();
+    } else if (tvWidget && tvWidget.container_id){
+      const container = document.getElementById(tvWidget.container_id);
+      if(container) container.innerHTML = '';
+    }
+  }catch(e){/* ignore */ }
+
+  try{
+    // inicializar TradingView
+    tvWidget = new TradingView.widget({
+      container_id: "tv_chart",
+      symbol,
+      interval: "15",
+      timezone: "Etc/UTC",
+      theme: "dark",
+      style: "1",
+      locale: "es",
+      toolbar_bg: "#111",
+      enable_publishing: false,
+      allow_symbol_change: true,
+      height: 420
+    });
+  }catch(err){
+    console.warn("TradingView init failed:", err);
+    const chartBox = document.getElementById("tv_chart");
+    if(chartBox) chartBox.innerHTML = `<div class="center">No se pudo cargar el gráfico</div>`;
+  }
 }
 
 /* ================= ACTUALIZAR SALDO ================= */
 async function updateBalance(){
-  const balance=document.getElementById("balance").value;
+  if(!currentUser) return;
+  const balance = document.getElementById("balance").value;
 
-  await safeFetch(API+"/admin/update-balance",{
-    method:"POST",
+  const resp = await safeFetch(API + "/admin/update-balance", {
+    method: "POST",
     headers,
-    body:JSON.stringify({
-      userId:currentUser._id,
+    body: JSON.stringify({
+      userId: currentUser._id || currentUser.id,
       balance
     })
   });
 
-  loadUsers();
+  if(resp){
+    // refrescar lista y seleccionar nuevamente al usuario (para ver cambios)
+    await loadUsers();
+    // intentar volver a seleccionar el usuario por id
+    // (si el backend devuelve la lista actualizada, loadUsers la habrá actualizado)
+  }
 }
 
 /* ================= LEVERAGE ================= */
 async function updateLeverage(){
-  const leverage=document.getElementById("leverage").value;
+  if(!currentUser) return;
+  const leverage = document.getElementById("leverage").value;
 
-  await safeFetch(API+"/admin/update-leverage",{
-    method:"POST",
+  const resp = await safeFetch(API + "/admin/update-leverage", {
+    method: "POST",
     headers,
-    body:JSON.stringify({
-      userId:currentUser._id,
+    body: JSON.stringify({
+      userId: currentUser._id || currentUser.id,
       leverage
     })
   });
 
-  loadUsers();
+  if(resp){
+    await loadUsers();
+  }
 }
 
 /* ================= RETIROS ================= */
 async function loadWithdraws(id){
 
-  const box=document.getElementById("withdraws");
-  box.innerHTML="Cargando...";
+  const box = document.getElementById("withdraws");
+  box.innerHTML = "Cargando...";
 
-  const data=await safeFetch(API+"/admin/withdraws/"+id,{headers});
-  if(!data)return;
+  const data = await safeFetch(API + "/admin/withdraws/" + encodeURIComponent(id), { headers });
+  if(!data) return;
 
-  box.innerHTML="";
-
-  if(data.length===0){
-    box.innerHTML='<span style="color:#777">Sin solicitudes</span>';
+  // Si la respuesta contiene un objeto con 'withdraws' extraer la lista
+  const list = Array.isArray(data) ? data : (data.withdraws || data.data || data.result || null);
+  if(!list){
+    box.innerHTML = '<span class="small">Respuesta inesperada del servidor</span>';
+    console.warn('/admin/withdraws response', data);
     return;
   }
 
-  data.forEach(w=>{
-    const div=document.createElement("div");
-    div.className="card";
-    div.innerHTML=`
-    <p>Monto: ${w.amount}</p>
-    <button class="primary" onclick="approveWithdraw('${w._id}')">Aprobar</button>
-    <button class="danger" onclick="rejectWithdraw('${w._id}')">Rechazar</button>
+  box.innerHTML = "";
+
+  if(list.length === 0){
+    box.innerHTML = '<span style="color:#777">Sin solicitudes</span>';
+    return;
+  }
+
+  list.forEach(w=>{
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML = `
+      <p>Monto: ${escapeHtml(String(w.amount || w.monto || 0))}</p>
+      <button class="primary" onclick="approveWithdraw('${w._id || w.id}')">Aprobar</button>
+      <button class="danger" onclick="rejectWithdraw('${w._id || w.id}')">Rechazar</button>
     `;
     box.appendChild(div);
   });
 }
 
 async function approveWithdraw(id){
-  await safeFetch(API+"/admin/withdraw/approve",{
-    method:"POST",
+  if(!id) return;
+  const resp = await safeFetch(API + "/admin/withdraw/approve", {
+    method: "POST",
     headers,
-    body:JSON.stringify({id})
+    body: JSON.stringify({ id })
   });
-  loadWithdraws(currentUser._id);
+  if(resp) loadWithdraws(currentUser._id || currentUser.id);
 }
 
 async function rejectWithdraw(id){
-  await safeFetch(API+"/admin/withdraw/reject",{
-    method:"POST",
+  if(!id) return;
+  const resp = await safeFetch(API + "/admin/withdraw/reject", {
+    method: "POST",
     headers,
-    body:JSON.stringify({id})
+    body: JSON.stringify({ id })
   });
-  loadWithdraws(currentUser._id);
+  if(resp) loadWithdraws(currentUser._id || currentUser.id);
 }
 
 /* ================= LOGOUT ================= */
 function logout(){
   localStorage.removeItem("admin_token");
-  location.href="login.html";
+  // si existiera token normal de usuario, lo dejamos intacto solo si es necesario;
+  // pero también podemos remover 'token' si quieres cerrar sesión completamente:
+  localStorage.removeItem("token");
+  location.href = "login.html";
 }
 
 /* ================= INIT ================= */
