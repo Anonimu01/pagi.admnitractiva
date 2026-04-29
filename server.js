@@ -3,33 +3,20 @@ const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const rateLimit = require("express-rate-limit");
-const { Server } = require("socket.io");
 const path = require("path");
-const mongoose = require("mongoose");
-
-const connectDB = require("./config/db");
 
 const app = express();
 const server = http.createServer(app);
 
 /* ================= CONFIG ================= */
-const CORE_API_URL = process.env.CORE_API_URL || null;
+const CORE_API_URL = process.env.CORE_API_URL;
+
 if (!CORE_API_URL) {
-  console.warn("⚠️ CORE_API_URL no definido (modo local activo)");
+  console.error("❌ ERROR: CORE_API_URL no está definido");
+  process.exit(1);
 }
 
-/* ================= DB ================= */
-connectDB();
-
-mongoose.connection.on("connected", () => {
-  console.log("✅ Mongo conectado");
-});
-
-/* ================= MODELOS ================= */
-// 🔥 IMPORTAR MODELOS (ESTA ES LA CLAVE DEL FIX)
-const User = require("./models/User");
-const Wallet = require("./models/Wallet");
-const Transaction = require("./models/Transaction");
+console.log("🌐 Conectando a backend real:", CORE_API_URL);
 
 /* ================= MIDDLEWARE ================= */
 const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
@@ -49,148 +36,123 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ================= SOCKET.IO ================= */
-const io = new Server(server, {
-  cors: {
-    origin: CLIENT_ORIGIN,
-    credentials: true
-  }
-});
-
-app.set("io", io);
-
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
-
-/* ================= ADMIN KEY (OPCIONAL) ================= */
+/* ================= ADMIN KEY ================= */
 function ensureAdminKey(req, res, next) {
   if (!process.env.ADMIN_API_KEY) return next();
 
-  const key = req.headers["x-admin-key"];
+  const key = req.headers["x-admin-api-key"] || req.headers["x-admin-key"];
+
   if (!key || key !== process.env.ADMIN_API_KEY) {
     return res.status(403).json({ msg: "Admin key inválida" });
   }
+
   next();
 }
 
-/* ================= ROUTES ================= */
-const adminRoutes = require("./routes/admin.routes");
-app.use("/api/admin", adminRoutes);
+/* ======================================================
+   🔥 PROXY HELPER (REUTILIZABLE)
+====================================================== */
+async function proxyToCore(path, options = {}) {
+  try {
+    const response = await fetch(`${CORE_API_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-api-key": process.env.ADMIN_API_KEY,
+        ...(options.headers || {})
+      }
+    });
+
+    const data = await response.json();
+
+    return {
+      status: response.status,
+      data
+    };
+  } catch (err) {
+    console.error("❌ Proxy error:", err);
+    return {
+      status: 500,
+      data: { ok: false, error: "proxy_error" }
+    };
+  }
+}
 
 /* ======================================================
-   💰 DEPOSIT (REAL + SOCKET + DB)
+   💰 DEPOSIT (REAL BACKEND)
 ====================================================== */
 app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
-  try {
-    const { userId, amount, leverage } = req.body;
+  const { userId, amount, leverage } = req.body;
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    let wallet = await Wallet.findOne({ user: user._id });
-
-    if (!wallet) {
-      wallet = new Wallet({
-        user: user._id,
-        balanceOwn: 0,
-        balance: 0,
-        credit: 0,
-        marginUsed: 0,
-        leverageFactor: 1
-      });
-    }
-
-    const before = wallet.balanceOwn || 0;
-
-    wallet.balanceOwn = before + Number(amount);
-    wallet.balance = wallet.balanceOwn;
-
-    if (leverage) {
-      wallet.leverageFactor = Number(leverage);
-      user.leverage = Number(leverage);
-    }
-
-    await wallet.save();
-
-    user.balance = wallet.balanceOwn;
-    await user.save();
-
-    const tx = await Transaction.create({
-      user: user._id,
-      userId: String(user._id),
-      type: "deposit",
-      amount: Number(amount),
-      balanceBefore: before,
-      balanceAfter: wallet.balanceOwn
+  if (!userId || !amount) {
+    return res.status(400).json({
+      ok: false,
+      error: "userId y amount son requeridos"
     });
-
-    /* 🔥 REALTIME */
-    io.emit(`balance:${userId}`, wallet.balanceOwn);
-    io.emit("transaction:new", tx);
-
-    res.json({
-      ok: true,
-      balance: wallet.balanceOwn
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: "Error depósito" });
   }
+
+  const result = await proxyToCore("/api/admin/deposit", {
+    method: "POST",
+    body: JSON.stringify({
+      userId,
+      amount,
+      leverage
+    })
+  });
+
+  return res.status(result.status).json(result.data);
 });
 
 /* ======================================================
-   💸 WITHDRAW (REAL)
+   💸 WITHDRAW (REAL BACKEND)
 ====================================================== */
 app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
-  try {
-    const { userId, amount } = req.body;
+  const { userId, amount } = req.body;
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const wallet = await Wallet.findOne({ user: user._id });
-    if (!wallet) return res.status(400).json({ msg: "Wallet no existe" });
-
-    if (wallet.balanceOwn < amount) {
-      return res.status(400).json({ msg: "Saldo insuficiente" });
-    }
-
-    const before = wallet.balanceOwn;
-
-    wallet.balanceOwn -= Number(amount);
-    wallet.balance = wallet.balanceOwn;
-
-    await wallet.save();
-
-    user.balance = wallet.balanceOwn;
-    await user.save();
-
-    const tx = await Transaction.create({
-      user: user._id,
-      userId: String(user._id),
-      type: "withdrawal",
-      amount: -Math.abs(amount),
-      balanceBefore: before,
-      balanceAfter: wallet.balanceOwn
+  if (!userId || !amount) {
+    return res.status(400).json({
+      ok: false,
+      error: "userId y amount son requeridos"
     });
-
-    /* 🔥 REALTIME */
-    io.emit(`balance:${userId}`, wallet.balanceOwn);
-    io.emit(`withdraw:${userId}`, "approved");
-    io.emit("transaction:new", tx);
-
-    res.json({
-      ok: true,
-      balance: wallet.balanceOwn
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ msg: "Error retiro" });
   }
+
+  const result = await proxyToCore("/api/admin/withdraw", {
+    method: "POST",
+    body: JSON.stringify({
+      userId,
+      amount
+    })
+  });
+
+  return res.status(result.status).json(result.data);
+});
+
+/* ======================================================
+   📊 GET ACCOUNT (VER SALDO REAL DEL CLIENTE)
+====================================================== */
+app.get("/api/admin/account/:userId", ensureAdminKey, async (req, res) => {
+  const { userId } = req.params;
+
+  const result = await proxyToCore(`/api/admin/account/${userId}`, {
+    method: "GET"
+  });
+
+  return res.status(result.status).json(result.data);
+});
+
+/* ======================================================
+   📜 HISTORIAL DE TRANSACCIONES
+====================================================== */
+app.get("/api/admin/transactions", ensureAdminKey, async (req, res) => {
+  const { userId } = req.query;
+
+  const query = userId ? `?userId=${userId}` : "";
+
+  const result = await proxyToCore(`/api/admin/transactions${query}`, {
+    method: "GET"
+  });
+
+  return res.status(result.status).json(result.data);
 });
 
 /* ================= ROOT ================= */
@@ -202,7 +164,7 @@ app.get("/", (req, res) => {
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
-    db: mongoose.connection.readyState
+    core: CORE_API_URL
   });
 });
 
