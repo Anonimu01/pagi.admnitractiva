@@ -2,7 +2,6 @@
 const router = require("express").Router();
 const jwt = require("jsonwebtoken");
 
-// Requerir modelos según tu estructura real
 const User = require("../models/User");
 const Withdraw = require("../models/Withdraw");
 
@@ -13,135 +12,169 @@ function verifyAdmin(req, res, next) {
     if (!auth || !auth.startsWith("Bearer ")) {
       return res.status(401).json({ msg: "No autorizado" });
     }
+
     const token = auth.split(" ")[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
     if (!decoded || !decoded.admin) {
       return res.status(403).json({ msg: "Acceso denegado" });
     }
+
     req.admin = decoded;
-    return next();
+    next();
   } catch (err) {
-    console.error("verifyAdmin error:", err && err.message ? err.message : err);
-    return res.status(401).json({ msg: "Token inválido" });
+    console.error("verifyAdmin error:", err);
+    res.status(401).json({ msg: "Token inválido" });
   }
 }
 
-/* ================= LOGIN ADMIN ================= */
+/* ================= LOGIN ================= */
 router.post("/login", (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ msg: "Datos incompletos" });
+    const { email, password } = req.body;
 
     if (email !== process.env.ADMIN_EMAIL || password !== process.env.ADMIN_PASS) {
       return res.status(401).json({ msg: "Credenciales inválidas" });
     }
 
     const token = jwt.sign({ admin: true }, process.env.JWT_SECRET, { expiresIn: "8h" });
-    return res.json({ token });
+
+    res.json({ token });
   } catch (err) {
-    console.error("admin login error:", err);
-    return res.status(500).json({ msg: "Error del servidor" });
+    res.status(500).json({ msg: "Error del servidor" });
   }
 });
 
 /* ================= GET USERS ================= */
-/* Devuelve directamente un array (compatibilidad con frontend original) */
 router.get("/users", verifyAdmin, async (req, res) => {
   try {
-    const users = await User.find().select("-password -verificationToken -__v").sort({ createdAt: -1 });
-    return res.json(users);
+    const users = await User.find().select("-password -__v").sort({ createdAt: -1 });
+    res.json(users);
   } catch (err) {
-    console.error("GET /admin/users error:", err);
-    return res.status(500).json({ msg: "Error al listar usuarios" });
+    res.status(500).json({ msg: "Error al listar usuarios" });
   }
 });
 
 /* ================= UPDATE BALANCE ================= */
 router.post("/update-balance", verifyAdmin, async (req, res) => {
   try {
-    const { userId, balance } = req.body || {};
-    if (!userId) return res.status(400).json({ msg: "userId requerido" });
+    const { userId, balance } = req.body;
 
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) || 0 });
-    return res.json({ msg: "Saldo actualizado" });
+    if (!userId) {
+      return res.status(400).json({ msg: "userId requerido" });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { balance: Number(balance) || 0 },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ msg: "Usuario no encontrado" });
+    }
+
+    // 🔥 EMITIR CAMBIO EN TIEMPO REAL
+    const io = req.app.get("io");
+    io.to(userId).emit("balanceUpdated", {
+      userId,
+      balance: user.balance
+    });
+
+    res.json({ msg: "Saldo actualizado", balance: user.balance });
+
   } catch (err) {
-    console.error("POST /admin/update-balance error:", err);
-    return res.status(500).json({ msg: "Error actualizando saldo" });
+    console.error(err);
+    res.status(500).json({ msg: "Error actualizando saldo" });
   }
 });
 
 /* ================= UPDATE LEVERAGE ================= */
-/* Soporta POST /update-leverage (compatible con frontend) */
 router.post("/update-leverage", verifyAdmin, async (req, res) => {
   try {
-    const { userId, leverage } = req.body || {};
-    if (!userId) return res.status(400).json({ msg: "userId requerido" });
-    if (typeof leverage === "undefined") return res.status(400).json({ msg: "leverage requerido" });
+    const { userId, leverage } = req.body;
 
-    await User.findByIdAndUpdate(userId, { leverage: Number(leverage) || 1 });
-    return res.json({ msg: "Leverage actualizado" });
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { leverage: Number(leverage) || 1 },
+      { new: true }
+    );
+
+    const io = req.app.get("io");
+
+    io.to(userId).emit("leverageUpdated", {
+      userId,
+      leverage: user.leverage
+    });
+
+    res.json({ msg: "Leverage actualizado" });
+
   } catch (err) {
-    console.error("POST /admin/update-leverage error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-/* Variante RESTful (opcional) */
-router.put("/users/leverage/:id", verifyAdmin, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { leverage } = req.body || {};
-    if (!id) return res.status(400).json({ msg: "id requerido" });
-    if (typeof leverage === "undefined") return res.status(400).json({ msg: "leverage requerido" });
-
-    await User.findByIdAndUpdate(id, { leverage: Number(leverage) || 1 });
-    return res.json({ msg: "Leverage actualizado (PUT)" });
-  } catch (err) {
-    console.error("PUT /admin/users/leverage/:id error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
+    res.status(500).json({ msg: "Error actualizando leverage" });
   }
 });
 
 /* ================= GET WITHDRAWS ================= */
-/* Devuelve array de retiros (compatibilidad frontend) */
 router.get("/withdraws/:userId", verifyAdmin, async (req, res) => {
   try {
-    const userId = req.params.userId;
-    if (!userId) return res.status(400).json({ msg: "userId requerido" });
+    const data = await Withdraw.find({
+      userId: req.params.userId,
+      status: "pending"
+    }).sort({ createdAt: -1 });
 
-    const data = await Withdraw.find({ userId, status: "pending" }).sort({ createdAt: -1 });
-    return res.json(data);
+    res.json(data);
   } catch (err) {
-    console.error("GET /admin/withdraws/:userId error:", err);
-    return res.status(500).json({ msg: "Error obteniendo retiros" });
+    res.status(500).json({ msg: "Error obteniendo retiros" });
   }
 });
 
-/* ================= APPROVE ================= */
+/* ================= APPROVE WITHDRAW ================= */
 router.post("/withdraw/approve", verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ msg: "id requerido" });
+    const { id } = req.body;
 
-    await Withdraw.findByIdAndUpdate(id, { status: "approved" });
-    return res.json({ msg: "Retiro aprobado" });
+    const withdraw = await Withdraw.findByIdAndUpdate(
+      id,
+      { status: "approved" },
+      { new: true }
+    );
+
+    const io = req.app.get("io");
+
+    io.to(withdraw.userId.toString()).emit("withdrawUpdate", {
+      status: "approved",
+      withdraw
+    });
+
+    res.json({ msg: "Retiro aprobado" });
+
   } catch (err) {
-    console.error("POST /admin/withdraw/approve error:", err);
-    return res.status(500).json({ msg: "Error aprobando retiro" });
+    res.status(500).json({ msg: "Error aprobando retiro" });
   }
 });
 
-/* ================= REJECT ================= */
+/* ================= REJECT WITHDRAW ================= */
 router.post("/withdraw/reject", verifyAdmin, async (req, res) => {
   try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ msg: "id requerido" });
+    const { id } = req.body;
 
-    await Withdraw.findByIdAndUpdate(id, { status: "rejected" });
-    return res.json({ msg: "Retiro rechazado" });
+    const withdraw = await Withdraw.findByIdAndUpdate(
+      id,
+      { status: "rejected" },
+      { new: true }
+    );
+
+    const io = req.app.get("io");
+
+    io.to(withdraw.userId.toString()).emit("withdrawUpdate", {
+      status: "rejected",
+      withdraw
+    });
+
+    res.json({ msg: "Retiro rechazado" });
+
   } catch (err) {
-    console.error("POST /admin/withdraw/reject error:", err);
-    return res.status(500).json({ msg: "Error rechazando retiro" });
+    res.status(500).json({ msg: "Error rechazando retiro" });
   }
 });
 
