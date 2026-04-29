@@ -12,20 +12,27 @@ const connectDB = require("./config/db");
 const app = express();
 const server = http.createServer(app);
 
-// ================= CONFIG SEGURA =================
+/* ================= CONFIG ================= */
 const CORE_API_URL = process.env.CORE_API_URL || null;
 if (!CORE_API_URL) {
   console.warn("⚠️ CORE_API_URL no definido (modo local activo)");
 }
 
-// ================= DB =================
+/* ================= DB ================= */
 connectDB();
 
 mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
 });
 
-// ================= MIDDLEWARE =================
+/* ================= MODELOS ================= */
+// IMPORTANTE: mismos modelos del server cliente
+const User = require("./models/User");
+
+const Wallet = mongoose.model("Wallet");
+const Transaction = mongoose.model("Transaction");
+
+/* ================= MIDDLEWARE ================= */
 const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
 
 app.use(cors({
@@ -43,7 +50,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// ================= SOCKET.IO =================
+/* ================= SOCKET.IO ================= */
 const io = new Server(server, {
   cors: {
     origin: CLIENT_ORIGIN,
@@ -58,7 +65,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ================= LOGIN SIN BLOQUEO =================
+/* ================= ADMIN KEY (OPCIONAL) ================= */
 function ensureAdminKey(req, res, next) {
   if (!process.env.ADMIN_API_KEY) return next();
 
@@ -69,50 +76,130 @@ function ensureAdminKey(req, res, next) {
   next();
 }
 
-// ⚠️ IMPORTANTE: login queda SIN bloqueo
+/* ================= ROUTES ================= */
 const adminRoutes = require("./routes/admin.routes");
 app.use("/api/admin", adminRoutes);
 
-// ================= EJEMPLOS TIEMPO REAL =================
-
-// actualizar saldo
-app.post("/api/admin/update-balance", async (req, res) => {
+/* ======================================================
+   💰 DEPOSIT (REAL + SOCKET + DB)
+====================================================== */
+app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
   try {
-    const { userId, balance } = req.body;
+    const { userId, amount, leverage } = req.body;
 
-    // aquí iría tu lógica de DB
-    console.log("💰 saldo actualizado:", userId, balance);
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    // emitir al cliente
-    req.io.emit(`balance:${userId}`, balance);
+    let wallet = await Wallet.findOne({ user: user._id });
 
-    res.json({ ok: true });
+    if (!wallet) {
+      wallet = new Wallet({
+        user: user._id,
+        balanceOwn: 0,
+        balance: 0,
+        credit: 0,
+        marginUsed: 0,
+        leverageFactor: 1
+      });
+    }
+
+    const before = wallet.balanceOwn || 0;
+
+    wallet.balanceOwn = before + Number(amount);
+    wallet.balance = wallet.balanceOwn;
+
+    if (leverage) {
+      wallet.leverageFactor = Number(leverage);
+      user.leverage = Number(leverage);
+    }
+
+    await wallet.save();
+
+    user.balance = wallet.balanceOwn;
+    await user.save();
+
+    const tx = await Transaction.create({
+      user: user._id,
+      userId: String(user._id),
+      type: "deposit",
+      amount: Number(amount),
+      balanceBefore: before,
+      balanceAfter: wallet.balanceOwn
+    });
+
+    /* 🔥 EMIT REALTIME */
+    io.emit(`balance:${userId}`, wallet.balanceOwn);
+    io.emit("transaction:new", tx);
+
+    res.json({
+      ok: true,
+      balance: wallet.balanceOwn
+    });
+
   } catch (err) {
-    res.status(500).json({ ok: false });
+    console.error(err);
+    res.status(500).json({ msg: "Error depósito" });
   }
 });
 
-// retiro aprobado
-app.post("/api/admin/withdraw-response", async (req, res) => {
+/* ======================================================
+   💸 WITHDRAW (REAL)
+====================================================== */
+app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
   try {
-    const { userId, status } = req.body;
+    const { userId, amount } = req.body;
 
-    console.log("🏦 retiro:", userId, status);
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    req.io.emit(`withdraw:${userId}`, status);
+    const wallet = await Wallet.findOne({ user: user._id });
+    if (!wallet) return res.status(400).json({ msg: "Wallet no existe" });
 
-    res.json({ ok: true });
+    if (wallet.balanceOwn < amount) {
+      return res.status(400).json({ msg: "Saldo insuficiente" });
+    }
+
+    const before = wallet.balanceOwn;
+
+    wallet.balanceOwn -= Number(amount);
+    wallet.balance = wallet.balanceOwn;
+
+    await wallet.save();
+
+    user.balance = wallet.balanceOwn;
+    await user.save();
+
+    const tx = await Transaction.create({
+      user: user._id,
+      userId: String(user._id),
+      type: "withdrawal",
+      amount: -Math.abs(amount),
+      balanceBefore: before,
+      balanceAfter: wallet.balanceOwn
+    });
+
+    /* 🔥 EMIT REALTIME */
+    io.emit(`balance:${userId}`, wallet.balanceOwn);
+    io.emit(`withdraw:${userId}`, "approved");
+    io.emit("transaction:new", tx);
+
+    res.json({
+      ok: true,
+      balance: wallet.balanceOwn
+    });
+
   } catch (err) {
-    res.status(500).json({ ok: false });
+    console.error(err);
+    res.status(500).json({ msg: "Error retiro" });
   }
 });
 
-// ================= ROOT =================
+/* ================= ROOT ================= */
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
-// ================= HEALTH =================
+/* ================= HEALTH ================= */
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
@@ -120,13 +207,13 @@ app.get("/healthz", (req, res) => {
   });
 });
 
-// ================= ERROR =================
+/* ================= ERROR ================= */
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).json({ msg: "Error servidor" });
 });
 
-// ================= START =================
+/* ================= START ================= */
 const PORT = process.env.PORT || 4000;
 
 server.listen(PORT, () => {
