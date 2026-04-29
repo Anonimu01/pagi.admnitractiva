@@ -7,9 +7,6 @@ const { Server } = require("socket.io");
 const { io: ClientIO } = require("socket.io-client");
 const axios = require("axios");
 const path = require("path");
-const mongoose = require("mongoose");
-
-const connectDB = require("./config/db");
 
 const app = express();
 const server = http.createServer(app);
@@ -17,15 +14,13 @@ const server = http.createServer(app);
 /* ======================================================
    CONFIG
    ====================================================== */
-const CORE_API = process.env.CORE_API_URL || "http://localhost:3000";
-const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
+const CORE_API = process.env.CORE_API_URL;
+const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
 
-/* ======================================================
-   CONNECT DB (solo para lectura si quieres logs/admin data)
-   ====================================================== */
-connectDB().catch((err) => {
-  console.error("DB error:", err);
-});
+if (!CORE_API) {
+  console.error("❌ ERROR: CORE_API_URL no está definido");
+  process.exit(1);
+}
 
 /* ======================================================
    MIDDLEWARES
@@ -34,10 +29,10 @@ app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
 
 app.use(rateLimit({
   windowMs: 60_000,
-  max: 300,
+  max: 300
 }));
 
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -53,22 +48,22 @@ const io = new Server(server, {
 });
 
 /* ======================================================
-   🔌 CONEXIÓN AL SERVER PRINCIPAL (REALTIME BRIDGE)
+   🔌 CONEXIÓN AL SERVER PRINCIPAL
    ====================================================== */
 const coreSocket = ClientIO(CORE_API, {
   transports: ["websocket"],
-  reconnection: true,
+  reconnection: true
 });
 
 coreSocket.on("connect", () => {
-  console.log("🟢 Conectado al server principal (realtime)");
+  console.log("🟢 Conectado al server principal");
 });
 
 coreSocket.on("disconnect", () => {
   console.warn("🔴 Desconectado del server principal");
 });
 
-/* 🔥 REENVIAR EVENTOS AL PANEL ADMIN */
+/* 🔥 REENVIAR EVENTOS */
 [
   "wallet_update",
   "account_update",
@@ -76,7 +71,7 @@ coreSocket.on("disconnect", () => {
   "transactions_update"
 ].forEach(event => {
   coreSocket.on(event, (data) => {
-    io.emit(event, data); // 👈 lo manda al panel admin en tiempo real
+    io.emit(event, data);
   });
 });
 
@@ -93,64 +88,47 @@ function ensureAdminKey(req, res, next) {
 }
 
 /* ======================================================
-   🔥 PROXY: DEPÓSITO
+   PROXY REQUEST
    ====================================================== */
-app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
+async function proxy(req, res, endpoint) {
   try {
-    const r = await axios.post(`${CORE_API}/api/admin/deposit`, req.body, {
-      headers: { "x-admin-api-key": process.env.ADMIN_API_KEY }
+    const r = await axios({
+      method: req.method,
+      url: `${CORE_API}${endpoint}`,
+      data: req.body,
+      headers: {
+        "x-admin-api-key": process.env.ADMIN_API_KEY
+      }
     });
 
     return res.json(r.data);
   } catch (err) {
-    console.error("deposit error:", err?.response?.data || err.message);
+    console.error("Proxy error:", err?.response?.data || err.message);
     return res.status(500).json({
       ok: false,
       error: err?.response?.data || err.message
     });
   }
-});
+}
 
 /* ======================================================
-   🔥 PROXY: RETIRO
+   ENDPOINTS ADMIN
    ====================================================== */
-app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
-  try {
-    const r = await axios.post(`${CORE_API}/api/admin/withdraw`, req.body, {
-      headers: { "x-admin-api-key": process.env.ADMIN_API_KEY }
-    });
+app.post("/api/admin/deposit", ensureAdminKey, (req, res) => {
+  proxy(req, res, "/api/admin/deposit");
+});
 
-    return res.json(r.data);
-  } catch (err) {
-    console.error("withdraw error:", err?.response?.data || err.message);
-    return res.status(500).json({
-      ok: false,
-      error: err?.response?.data || err.message
-    });
-  }
+app.post("/api/admin/withdraw", ensureAdminKey, (req, res) => {
+  proxy(req, res, "/api/admin/withdraw");
+});
+
+app.get("/api/admin/transactions", ensureAdminKey, (req, res) => {
+  const qs = req.url.split("?")[1] || "";
+  proxy(req, res, `/api/admin/transactions?${qs}`);
 });
 
 /* ======================================================
-   🔥 PROXY: VER USUARIOS / CUENTA
-   ====================================================== */
-app.get("/api/admin/account/:userId", ensureAdminKey, async (req, res) => {
-  try {
-    const r = await axios.get(`${CORE_API}/api/admin/transactions?userId=${req.params.userId}`, {
-      headers: { "x-admin-api-key": process.env.ADMIN_API_KEY }
-    });
-
-    return res.json(r.data);
-  } catch (err) {
-    console.error("account error:", err?.response?.data || err.message);
-    return res.status(500).json({
-      ok: false,
-      error: err?.response?.data || err.message
-    });
-  }
-});
-
-/* ======================================================
-   PANEL ADMIN
+   PANEL
    ====================================================== */
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
@@ -163,22 +141,22 @@ app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
     core: CORE_API,
-    socketConnected: coreSocket.connected
+    socket: coreSocket.connected
   });
 });
 
 /* ======================================================
    START
    ====================================================== */
-const PORT = process.env.ADMIN_PORT || 4000;
+const PORT = process.env.PORT || 4000;
 
 server.listen(PORT, () => {
-  console.log("🔥 ADMIN SERVER RUNNING:", PORT);
-  console.log("CORE API:", CORE_API);
+  console.log("🔥 ADMIN SERVER:", PORT);
+  console.log("CORE:", CORE_API);
 });
 
 /* ======================================================
-   SOCKET ADMIN CLIENT CONNECTION
+   SOCKET ADMIN CLIENT
    ====================================================== */
 io.on("connection", (socket) => {
   console.log("🟢 Admin conectado:", socket.id);
