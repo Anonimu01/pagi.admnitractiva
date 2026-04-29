@@ -26,11 +26,10 @@ mongoose.connection.on("connected", () => {
 });
 
 /* ================= MODELOS ================= */
-// IMPORTANTE: mismos modelos del server cliente
+// 🔥 IMPORTAR MODELOS (ESTA ES LA CLAVE DEL FIX)
 const User = require("./models/User");
-
-const Wallet = mongoose.model("Wallet");
-const Transaction = mongoose.model("Transaction");
+const Wallet = require("./models/Wallet");
+const Transaction = require("./models/Transaction");
 
 /* ================= MIDDLEWARE ================= */
 const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
@@ -127,7 +126,7 @@ app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
       balanceAfter: wallet.balanceOwn
     });
 
-    /* 🔥 EMIT REALTIME */
+    /* 🔥 REALTIME */
     io.emit(`balance:${userId}`, wallet.balanceOwn);
     io.emit("transaction:new", tx);
 
@@ -178,7 +177,7 @@ app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
       balanceAfter: wallet.balanceOwn
     });
 
-    /* 🔥 EMIT REALTIME */
+    /* 🔥 REALTIME */
     io.emit(`balance:${userId}`, wallet.balanceOwn);
     io.emit(`withdraw:${userId}`, "approved");
     io.emit("transaction:new", tx);
