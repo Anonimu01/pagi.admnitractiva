@@ -13,6 +13,8 @@ const connectDB = require("./config/db");
 const app = express();
 const server = http.createServer(app);
 
+const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
+
 /* ======================================================
    CONFIG
 ====================================================== */
@@ -23,13 +25,15 @@ const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "ad
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
 if (!CORE_API_URL) {
-  console.warn("⚠️ CORE_API_URL no definido. Se usará fallback local cuando sea posible.");
+  console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
 }
 
 /* ======================================================
    DB
 ====================================================== */
-connectDB();
+Promise.resolve(connectDB()).catch((err) => {
+  console.error("Error conectando DB:", err?.message || err);
+});
 
 mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
@@ -45,8 +49,7 @@ mongoose.connection.on("disconnected", () => {
 
 /* ======================================================
    MODELOS
-   - Se definen aquí para evitar errores de archivos faltantes
-   - Compatibles con la estructura del servidor de clientes
+   Se definen aquí para no depender de archivos faltantes.
 ====================================================== */
 const userSchema = new mongoose.Schema(
   {
@@ -124,7 +127,7 @@ const withdrawSchema = new mongoose.Schema(
   {
     userId: { type: String, index: true },
     amount: { type: Number, default: 0 },
-    status: { type: String, default: "pending", index: true },
+    status: { type: String, default: "pending", index: true }, // pending | approved | rejected
     note: { type: String, default: "" },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -134,37 +137,40 @@ const withdrawSchema = new mongoose.Schema(
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Wallet = mongoose.models.Wallet || mongoose.model("Wallet", walletSchema);
-const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);
+const Transaction =
+  mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);
 const Position = mongoose.models.Position || mongoose.model("Position", positionSchema);
 const Withdraw = mongoose.models.Withdraw || mongoose.model("Withdraw", withdrawSchema);
 
 /* ======================================================
    MIDDLEWARE
 ====================================================== */
-const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || true;
+const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
+
+function parseAllowedOrigins(raw) {
+  if (!raw || raw === "*") return "*";
+  return String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+const ALLOWED_ORIGINS = parseAllowedOrigins(CLIENT_ORIGIN_RAW);
 
 app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (CLIENT_ORIGIN === true) return callback(null, true);
-
-      const allowed = new Set(
-        String(CLIENT_ORIGIN)
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-      );
-
-      if (allowed.has(origin)) return callback(null, true);
-
+      if (ALLOWED_ORIGINS === "*") return callback(null, true);
+      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
       try {
         const url = new URL(origin);
         if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
           return callback(null, true);
         }
       } catch {}
-
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -189,7 +195,7 @@ app.use(express.static(path.join(__dirname, "public")));
 ====================================================== */
 const io = new Server(server, {
   cors: {
-    origin: CLIENT_ORIGIN === true ? true : CLIENT_ORIGIN,
+    origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -218,88 +224,9 @@ function getCookie(req, name) {
   return null;
 }
 
-function isAdminTokenValid(req) {
-  const auth = req.headers.authorization || req.headers.Authorization || "";
-  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
-
-  const tokenFromCookie = getCookie(req, "admin_token");
-  const token = bearer || tokenFromCookie;
-
-  if (!token) return false;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return !!decoded && (decoded.admin === true || decoded.role === "admin");
-  } catch {
-    return false;
-  }
-}
-
-function ensureAdminAuth(req, res, next) {
-  try {
-    if (ADMIN_API_KEY) {
-      const key =
-        req.headers["x-admin-api-key"] ||
-        req.headers["x-admin-key"] ||
-        req.headers["admin-key"] ||
-        "";
-      if (key && key === ADMIN_API_KEY) return next();
-    }
-
-    if (isAdminTokenValid(req)) {
-      return next();
-    }
-
-    return res.status(401).json({ ok: false, msg: "No autorizado" });
-  } catch (err) {
-    return res.status(401).json({ ok: false, msg: "No autorizado" });
-  }
-}
-
-function rewriteSetCookie(cookie) {
-  return String(cookie || "")
-    .replace(/;\s*Domain=[^;]+/gi, "")
-    .replace(/;\s*domain=[^;]+/gi, "");
-}
-
-function relaySetCookies(fromHeaders, toRes) {
-  const cookies = [];
-
-  try {
-    if (fromHeaders && typeof fromHeaders.getSetCookie === "function") {
-      const arr = fromHeaders.getSetCookie();
-      if (Array.isArray(arr) && arr.length) cookies.push(...arr);
-    }
-  } catch {}
-
-  try {
-    const single = fromHeaders?.get?.("set-cookie");
-    if (single) cookies.push(single);
-  } catch {}
-
-  if (cookies.length) {
-    toRes.setHeader("set-cookie", cookies.map(rewriteSetCookie));
-  }
-}
-
 function normalizeNumber(value, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function getEffectiveBalance(userDoc, walletDoc) {
-  const walletBalance = Number(walletDoc?.balanceOwn ?? walletDoc?.balance);
-  const userBalance = Number(userDoc?.balance ?? 0);
-
-  if (Number.isFinite(walletBalance) && walletBalance >= 0) return walletBalance;
-  if (Number.isFinite(userBalance) && userBalance >= 0) return userBalance;
-  return 0;
-}
-
-function normalizeSide(value) {
-  const s = String(value || "").trim().toUpperCase();
-  if (["BUY", "LONG", "BULL"].includes(s)) return "BUY";
-  if (["SELL", "SHORT", "BEAR"].includes(s)) return "SELL";
-  return "";
 }
 
 function compactSymbol(value) {
@@ -309,10 +236,11 @@ function compactSymbol(value) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
-function getCurrentPriceForSymbol(symbol) {
-  const target = compactSymbol(symbol);
-  if (!target) return null;
-  return null;
+function normalizeSide(value) {
+  const s = String(value || "").trim().toUpperCase();
+  if (["BUY", "LONG", "BULL"].includes(s)) return "BUY";
+  if (["SELL", "SHORT", "BEAR"].includes(s)) return "SELL";
+  return "";
 }
 
 function computePositionPnl(position = {}, currentPrice = null) {
@@ -344,6 +272,21 @@ function annotatePosition(position = {}) {
   };
 }
 
+function getEffectiveBalance(userDoc, walletDoc) {
+  const walletBalance = Number(walletDoc?.balanceOwn ?? walletDoc?.balance);
+  const userBalance = Number(userDoc?.balance ?? 0);
+
+  if (Number.isFinite(walletBalance) && walletBalance >= 0) return walletBalance;
+  if (Number.isFinite(userBalance) && userBalance >= 0) return userBalance;
+  return 0;
+}
+
+function getCurrentPriceForSymbol(symbol) {
+  const target = compactSymbol(symbol);
+  if (!target) return null;
+  return null;
+}
+
 async function getUserDocFromBearer(req) {
   try {
     const auth = req.headers.authorization || req.headers.Authorization || null;
@@ -351,7 +294,6 @@ async function getUserDocFromBearer(req) {
 
     const token = String(auth).split(" ")[1];
     if (!token) return null;
-    if (!JWT_SECRET) return null;
 
     let payload;
     try {
@@ -368,6 +310,125 @@ async function getUserDocFromBearer(req) {
   } catch {
     return null;
   }
+}
+
+function isAdminTokenValid(req) {
+  const auth = req.headers.authorization || req.headers.Authorization || "";
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const tokenFromCookie = getCookie(req, "admin_token");
+  const token = bearer || tokenFromCookie;
+
+  if (!token) return false;
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return !!decoded && (decoded.admin === true || decoded.role === "admin");
+  } catch {
+    return false;
+  }
+}
+
+function ensureAdminAuth(req, res, next) {
+  try {
+    if (ADMIN_API_KEY) {
+      const key =
+        req.headers["x-admin-api-key"] ||
+        req.headers["x-admin-key"] ||
+        req.headers["admin-key"] ||
+        "";
+      if (key && key === ADMIN_API_KEY) return next();
+    }
+
+    if (isAdminTokenValid(req)) return next();
+
+    return res.status(401).json({ ok: false, msg: "No autorizado" });
+  } catch {
+    return res.status(401).json({ ok: false, msg: "No autorizado" });
+  }
+}
+
+function rewriteSetCookie(cookie) {
+  return String(cookie || "")
+    .replace(/;\s*Domain=[^;]+/gi, "")
+    .replace(/;\s*domain=[^;]+/gi, "");
+}
+
+function relaySetCookies(fromHeaders, toRes) {
+  const cookies = [];
+
+  try {
+    if (fromHeaders && typeof fromHeaders.getSetCookie === "function") {
+      const arr = fromHeaders.getSetCookie();
+      if (Array.isArray(arr) && arr.length) cookies.push(...arr);
+    }
+  } catch {}
+
+  try {
+    const single = fromHeaders?.get?.("set-cookie");
+    if (single) cookies.push(single);
+  } catch {}
+
+  if (cookies.length) {
+    toRes.setHeader("set-cookie", cookies.map(rewriteSetCookie));
+  }
+}
+
+function getIo(req) {
+  return req.io || req.app?.get?.("io") || io;
+}
+
+function emitStateUpdates(userId, accountPayload = null, positions = null, transaction = null) {
+  try {
+    const socket = io;
+    socket.emit("wallet_update", { userId, account: accountPayload?.account || accountPayload });
+    socket.emit("account_update", { userId, account: accountPayload?.account || accountPayload });
+
+    if (Array.isArray(positions)) socket.emit("positions_update", { userId, positions });
+    if (transaction) socket.emit("transactions_update", { userId, transaction });
+
+    socket.emit("admin:balance-updated", { userId, account: accountPayload?.account || accountPayload });
+    if (transaction) socket.emit("admin:transaction-created", { userId, transaction });
+
+    if (accountPayload?.account?.balance !== undefined) {
+      socket.emit(`balance:${userId}`, accountPayload.account.balance);
+    }
+  } catch (e) {
+    console.warn("emitStateUpdates error:", e?.message || e);
+  }
+}
+
+function signAdminToken(payload = {}) {
+  return jwt.sign(
+    {
+      admin: true,
+      role: "admin",
+      email: payload.email || ADMIN_EMAIL || "admin",
+    },
+    JWT_SECRET,
+    { expiresIn: "8h" }
+  );
+}
+
+function normalizeWalletSnapshot(wallet, openPnl = 0) {
+  const balanceOwn = Number(wallet?.balanceOwn ?? wallet?.balance ?? 0) || 0;
+  const credit = Number(wallet?.credit ?? 0) || 0;
+  const marginUsed = Math.max(Number(wallet?.marginUsed ?? 0) || 0, 0);
+  const equity = balanceOwn + openPnl;
+  const freeMargin = Math.max(equity + credit - marginUsed, 0);
+  const marginLevel = marginUsed > 0 ? (equity / marginUsed) * 100 : 0;
+
+  return {
+    balance: balanceOwn,
+    balanceOwn,
+    credit,
+    equity,
+    marginUsed,
+    freeMargin,
+    marginLevel,
+    leverageFactor: Number(wallet?.leverageFactor ?? 1) || 1,
+    currency: wallet?.currency || "USD",
+    openPnl,
+  };
 }
 
 async function getWalletForUser(userId) {
@@ -445,28 +506,6 @@ async function loadWithdrawsForUser(userId, status = "pending") {
     .lean()
     .exec()
     .catch(() => []);
-}
-
-function normalizeWalletSnapshot(wallet, openPnl = 0) {
-  const balanceOwn = Number(wallet?.balanceOwn ?? wallet?.balance ?? 0) || 0;
-  const credit = Number(wallet?.credit ?? 0) || 0;
-  const marginUsed = Math.max(Number(wallet?.marginUsed ?? 0) || 0, 0);
-  const equity = balanceOwn + openPnl;
-  const freeMargin = Math.max(equity + credit - marginUsed, 0);
-  const marginLevel = marginUsed > 0 ? (equity / marginUsed) * 100 : 0;
-
-  return {
-    balance: balanceOwn,
-    balanceOwn,
-    credit,
-    equity,
-    marginUsed,
-    freeMargin,
-    marginLevel,
-    leverageFactor: Number(wallet?.leverageFactor ?? 1) || 1,
-    currency: wallet?.currency || "USD",
-    openPnl,
-  };
 }
 
 async function recordTransaction({
@@ -571,20 +610,6 @@ async function getTargetUserForAdmin(req, res) {
   return null;
 }
 
-function emitStateUpdates(userId, accountPayload = null, positions = null, transaction = null) {
-  try {
-    io.emit("wallet_update", { userId, account: accountPayload?.account || accountPayload });
-    io.emit("account_update", { userId, account: accountPayload?.account || accountPayload });
-    if (Array.isArray(positions)) io.emit("positions_update", { userId, positions });
-    if (transaction) io.emit("transactions_update", { userId, transaction });
-
-    io.emit("admin:balance-updated", { userId, account: accountPayload?.account || accountPayload });
-    if (transaction) io.emit("admin:transaction-created", { userId, transaction });
-  } catch (e) {
-    console.warn("emitStateUpdates error:", e?.message || e);
-  }
-}
-
 function buildCoreUrl(endpoint) {
   const base = CORE_API_URL.replace(/\/+$/, "");
   const route = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
@@ -592,7 +617,7 @@ function buildCoreUrl(endpoint) {
 }
 
 async function proxyToCore(req, endpoint, options = {}) {
-  if (!CORE_API_URL) {
+  if (!CORE_API_URL || !fetchFn) {
     return {
       ok: false,
       status: 503,
@@ -602,7 +627,7 @@ async function proxyToCore(req, endpoint, options = {}) {
   }
 
   try {
-    const response = await fetch(buildCoreUrl(endpoint), {
+    const response = await fetchFn(buildCoreUrl(endpoint), {
       method: options.method || "GET",
       headers: {
         "Content-Type": "application/json",
@@ -645,39 +670,11 @@ async function proxyToCore(req, endpoint, options = {}) {
   }
 }
 
-async function proxyDeposit(req, res, payload) {
-  const result = await proxyToCore(req, "/api/admin/deposit", {
-    method: "POST",
-    body: payload,
-  });
-
-  if (result.headers) relaySetCookies(result.headers, res);
-
-  if (result.ok) {
-    return res.status(result.status).json(result.data);
-  }
-
-  return null;
-}
-
-async function proxyWithdraw(req, res, payload) {
-  const result = await proxyToCore(req, "/api/admin/withdraw", {
-    method: "POST",
-    body: payload,
-  });
-
-  if (result.headers) relaySetCookies(result.headers, res);
-
-  if (result.ok) {
-    return res.status(result.status).json(result.data);
-  }
-
-  return null;
-}
-
 async function localDeposit({ userId, amount, leverage, note, currency = "USD" }) {
   const user = await User.findById(userId).catch(() => null);
-  if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  if (!user) {
+    return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  }
 
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
@@ -724,7 +721,7 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
     status: 200,
     data: {
       ok: true,
-      msg: "Depósito aplicado (local fallback)",
+      msg: "Depósito aplicado",
       data: {
         balance: wallet.balanceOwn,
         leverage: wallet.leverageFactor,
@@ -738,7 +735,9 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
 
 async function localWithdraw({ userId, amount, note }) {
   const user = await User.findById(userId).catch(() => null);
-  if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  if (!user) {
+    return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  }
 
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
@@ -783,7 +782,7 @@ async function localWithdraw({ userId, amount, note }) {
     status: 200,
     data: {
       ok: true,
-      msg: "Retiro aplicado (local fallback)",
+      msg: "Retiro aplicado",
       data: {
         balance: wallet.balanceOwn,
         transaction: tx,
@@ -794,21 +793,102 @@ async function localWithdraw({ userId, amount, note }) {
   };
 }
 
-/* ======================================================
-   ADMIN AUTH
-====================================================== */
-function signAdminToken(payload = {}) {
-  return jwt.sign(
-    {
-      admin: true,
-      role: "admin",
-      email: payload.email || ADMIN_EMAIL || "admin",
+async function depositByDelta(req, res, userId, desiredBalance, leverage, note) {
+  const user = await User.findById(userId).catch(() => null);
+  if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+
+  const wallet = await getWalletDocForUser(user._id);
+  const currentBalance = getEffectiveBalance(user, wallet.toObject ? wallet.toObject() : wallet);
+  const delta = normalizeNumber(desiredBalance, 0) - currentBalance;
+
+  if (delta > 0) {
+    const remote = await proxyToCore(req, "/api/admin/deposit", {
+      method: "POST",
+      body: {
+        userId,
+        amount: delta,
+        leverage: leverage !== undefined ? Number(leverage) : undefined,
+        note: note || "Update balance",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      return {
+        ok: true,
+        status: remote.status,
+        data: remote.data,
+      };
+    }
+
+    const local = await localDeposit({
+      userId,
+      amount: delta,
+      leverage: leverage !== undefined ? Number(leverage) : undefined,
+      note: note || "Update balance",
+    });
+    return local;
+  }
+
+  if (delta < 0) {
+    const remote = await proxyToCore(req, "/api/admin/withdraw", {
+      method: "POST",
+      body: {
+        userId,
+        amount: Math.abs(delta),
+        note: note || "Update balance",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      return {
+        ok: true,
+        status: remote.status,
+        data: remote.data,
+      };
+    }
+
+    const local = await localWithdraw({
+      userId,
+      amount: Math.abs(delta),
+      note: note || "Update balance",
+    });
+    return local;
+  }
+
+  if (leverage !== undefined && leverage !== null && leverage !== "") {
+    const lev = Number(leverage) || 1;
+    wallet.leverageFactor = lev;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
+    await user.save();
+  }
+
+  const payload = await buildAccountForUser(user);
+  emitStateUpdates(userId, payload, null, null);
+
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      ok: true,
+      msg: "Saldo actualizado",
+      data: {
+        balance: payload.account.balance,
+        account: payload.account,
+        wallet: payload.wallet,
+      },
     },
-    JWT_SECRET,
-    { expiresIn: "8h" }
-  );
+  };
 }
 
+/* ======================================================
+   AUTH
+====================================================== */
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -817,10 +897,12 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
       return res.status(400).json({ ok: false, msg: "Datos incompletos" });
     }
 
-    if (ADMIN_EMAIL && ADMIN_PASS) {
-      if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) {
-        return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
-      }
+    if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) {
+      return res.status(500).json({ ok: false, msg: "Servidor admin mal configurado" });
+    }
+
+    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) {
+      return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
     }
 
     const token = signAdminToken({ email });
@@ -845,7 +927,7 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
 });
 
 /* ======================================================
-   USERS / ACCOUNT / TRANSACTIONS / WITHDRAWS
+   USERS
 ====================================================== */
 app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (req, res) => {
   try {
@@ -863,19 +945,38 @@ app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (req, res) =>
   }
 });
 
+/* ======================================================
+   ACCOUNT
+====================================================== */
 app.get(["/api/admin/account/:userId", "/api/account/:userId"], ensureAdminAuth, async (req, res) => {
   try {
     const user = await getTargetUserForAdmin(req, res);
     if (!user) return;
 
     const payload = await buildAccountForUser(user);
-    return res.json(payload);
+    return res.json({ ok: true, ...payload });
   } catch (err) {
     console.error("GET account error:", err);
     return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
   }
 });
 
+app.get(["/api/account", "/api/admin/account"], ensureAdminAuth, async (req, res) => {
+  try {
+    const user = await getTargetUserForAdmin(req, res);
+    if (!user) return;
+
+    const payload = await buildAccountForUser(user);
+    return res.json({ ok: true, ...payload });
+  } catch (err) {
+    console.error("GET account error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
+  }
+});
+
+/* ======================================================
+   TRANSACTIONS
+====================================================== */
 app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
@@ -897,6 +998,30 @@ app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
   }
 });
 
+app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
+
+    const txs = userId
+      ? await loadTransactionsForUser(userId, limit)
+      : await Transaction.find({})
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean()
+          .exec()
+          .catch(() => []);
+
+    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
+  } catch (err) {
+    console.error("/api/transactions error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
+  }
+});
+
+/* ======================================================
+   WITHDRAW REQUESTS
+====================================================== */
 app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.params.userId;
@@ -919,15 +1044,24 @@ app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
     const userId = w.userId;
     const amount = Number(w.amount || 0);
 
-    const remote = await proxyWithdraw(req, res, {
-      userId,
-      amount,
-      note: `Aprobación de retiro #${id}`,
+    const remote = await proxyToCore(req, "/api/admin/withdraw", {
+      method: "POST",
+      body: {
+        userId,
+        amount,
+        note: `Aprobación de retiro #${id}`,
+      },
     });
 
-    if (!remote) {
-      const local = await localWithdraw({ userId, amount, note: `Aprobación de retiro #${id}` });
+    if (!remote.ok) {
+      const local = await localWithdraw({
+        userId,
+        amount,
+        note: `Aprobación de retiro #${id}`,
+      });
       if (!local.ok) return res.status(local.status).json(local.data);
+    } else if (remote.headers) {
+      relaySetCookies(remote.headers, res);
     }
 
     w.status = "approved";
@@ -935,6 +1069,7 @@ app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
     await w.save();
 
     io.emit("admin:withdraw-response", { userId, status: "approved", id });
+    io.emit(`withdraw:${userId}`, "approved");
 
     return res.json({ ok: true, msg: "Retiro aprobado" });
   } catch (err) {
@@ -956,6 +1091,7 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
     await w.save();
 
     io.emit("admin:withdraw-response", { userId: w.userId, status: "rejected", id });
+    io.emit(`withdraw:${w.userId}`, "rejected");
 
     return res.json({ ok: true, msg: "Retiro rechazado" });
   } catch (err) {
@@ -965,99 +1101,23 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
 });
 
 /* ======================================================
-   UPDATE BALANCE / LEVERAGE
-   - Se mantiene compatible con el panel antiguo
-   - Update balance usa CORE cuando existe, para que el cliente
-     vea el cambio inmediato en su servidor
+   UPDATE LEVERAGE
 ====================================================== */
-app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, balance, leverage } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
-
-    const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
-
-    const desiredBalance = normalizeNumber(balance, 0);
-    const currentBalance = getEffectiveBalance(user, await getWalletForUser(user._id));
-    const delta = desiredBalance - currentBalance;
-
-    if (delta > 0) {
-      const result = CORE_API_URL
-        ? await proxyToCore(req, "/api/admin/deposit", {
-            method: "POST",
-            body: { userId, amount: delta, leverage: leverage !== undefined ? Number(leverage) : undefined, note: "Update balance" },
-          })
-        : await localDeposit({
-            userId,
-            amount: delta,
-            leverage: leverage !== undefined ? Number(leverage) : undefined,
-            note: "Update balance",
-          });
-
-      if (result?.headers) relaySetCookies(result.headers, res);
-      if (result && result.ok) {
-        io.emit("admin:balance-updated", { userId, balance: desiredBalance, delta });
-        return res.status(result.status).json(result.data);
-      }
-    } else if (delta < 0) {
-      const result = CORE_API_URL
-        ? await proxyToCore(req, "/api/admin/withdraw", {
-            method: "POST",
-            body: { userId, amount: Math.abs(delta), note: "Update balance" },
-          })
-        : await localWithdraw({
-            userId,
-            amount: Math.abs(delta),
-            note: "Update balance",
-          });
-
-      if (result?.headers) relaySetCookies(result.headers, res);
-      if (result && result.ok) {
-        io.emit("admin:balance-updated", { userId, balance: desiredBalance, delta });
-        return res.status(result.status).json(result.data);
-      }
-    }
-
-    if (leverage !== undefined && leverage !== null && leverage !== "") {
-      const wallet = await getWalletDocForUser(user._id);
-      wallet.leverageFactor = Number(leverage) || 1;
-      wallet.updatedAt = new Date();
-      await wallet.save();
-
-      user.leverage = Number(leverage) || 1;
-      user.updatedAt = new Date();
-      await user.save();
-    }
-
-    const payload = await buildAccountForUser(user);
-    io.emit("admin:balance-updated", { userId, balance: desiredBalance, delta });
-
-    return res.json({
-      ok: true,
-      msg: "Saldo actualizado",
-      data: {
-        balance: payload.account.balance,
-        account: payload.account,
-        wallet: payload.wallet,
-      },
-    });
-  } catch (err) {
-    console.error("/api/admin/update-balance error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
-  }
-});
-
-app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
+app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
-    if (typeof leverage === "undefined") return res.status(400).json({ ok: false, msg: "leverage requerido" });
+
+    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
+      return res.status(400).json({ msg: "Datos incompletos" });
+    }
 
     const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    const lev = Number(leverage) || 1;
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) {
+      return res.status(400).json({ msg: "Leverage inválido" });
+    }
 
     const wallet = await getWalletDocForUser(user._id);
     wallet.leverageFactor = lev;
@@ -1068,122 +1128,194 @@ app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
     user.updatedAt = new Date();
     await user.save();
 
-    io.emit("admin:leverage-updated", { userId, leverage: lev });
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(userId, account, null, null);
 
-    return res.json({ ok: true, msg: "Leverage actualizado" });
+    return res.json({
+      ok: true,
+      msg: "Leverage actualizado",
+      leverage: lev,
+      account: account.account,
+      wallet: account.wallet,
+    });
   } catch (err) {
     console.error("/api/admin/update-leverage error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando leverage" });
+    return res.status(500).json({ msg: "Error actualizando leverage" });
+  }
+});
+
+app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { leverage } = req.body || {};
+
+    if (!id) return res.status(400).json({ msg: "id requerido" });
+    if (typeof leverage === "undefined" || leverage === null || leverage === "") {
+      return res.status(400).json({ msg: "leverage requerido" });
+    }
+
+    const user = await User.findById(id).catch(() => null);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
+
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) {
+      return res.status(400).json({ msg: "Leverage inválido" });
+    }
+
+    const wallet = await getWalletDocForUser(user._id);
+    wallet.leverageFactor = lev;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
+    await user.save();
+
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(String(user._id), account, null, null);
+
+    return res.json({
+      ok: true,
+      msg: "Leverage actualizado (PUT)",
+      leverage: lev,
+      account: account.account,
+      wallet: account.wallet,
+    });
+  } catch (err) {
+    console.error("PUT /admin/users/leverage/:id error:", err);
+    return res.status(500).json({ msg: "Error actualizando leverage" });
   }
 });
 
 /* ======================================================
-   PROXY DIRECTO A CORE
-   - Mantiene compatibilidad con el servidor de clientes
-   - Emite sockets en el core para actualización inmediata
+   UPDATE BALANCE
+   Si el panel manda un saldo exacto, aquí se convierte en delta
+   y se aplica deposit/withdraw real para que el cliente quede
+   sincronizado correctamente.
 ====================================================== */
-app.post("/api/admin/deposit", ensureAdminAuth, async (req, res) => {
+app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, balance, leverage, note } = req.body || {};
+
+    if (!userId) {
+      return res.status(400).json({ ok: false, msg: "userId requerido" });
+    }
+
+    const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
+    if (result?.headers) relaySetCookies(result.headers, res);
+
+    if (result && result.ok) {
+      return res.status(result.status).json(result.data);
+    }
+
+    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
+  } catch (err) {
+    console.error("/api/admin/update-balance error:", err);
+    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
+  }
+});
+
+/* ======================================================
+   DEPOSIT / WITHDRAW
+====================================================== */
+app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, amount, leverage, note, currency } = req.body || {};
-    if (!userId || !amount) {
+
+    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
       return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
     }
 
-    const proxy = CORE_API_URL
-      ? await proxyDeposit(req, res, {
-          userId,
-          amount: Number(amount),
-          leverage: leverage !== undefined ? Number(leverage) : undefined,
-          note: note || "Admin deposit",
-          currency: currency || "USD",
-        })
-      : await localDeposit({
-          userId,
-          amount: Number(amount),
-          leverage: leverage !== undefined ? Number(leverage) : undefined,
-          note: note || "Admin deposit",
-          currency: currency || "USD",
-        });
-
-    if (proxy && proxy.ok) {
-      io.emit("admin:balance-updated", { userId, amount: Number(amount), action: "deposit" });
-      return res.status(proxy.status).json(proxy.data);
+    const numericAmount = normalizeNumber(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "amount inválido" });
     }
 
-    return res.status(proxy?.status || 500).json(proxy?.data || { ok: false, msg: "Error depósito" });
+    const remote = await proxyToCore(req, "/api/admin/deposit", {
+      method: "POST",
+      body: {
+        userId,
+        amount: numericAmount,
+        leverage: leverage !== undefined ? Number(leverage) : undefined,
+        note: note || "Admin deposit",
+        currency: currency || "USD",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
+      const account = remote.data?.data?.account || remote.data?.account || null;
+      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
+      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+
+      emitStateUpdates(userId, { account, wallet }, null, tx);
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+
+      return res.status(remote.status).json(remote.data);
+    }
+
+    const local = await localDeposit({
+      userId,
+      amount: numericAmount,
+      leverage: leverage !== undefined ? Number(leverage) : undefined,
+      note: note || "Admin deposit",
+      currency: currency || "USD",
+    });
+
+    return res.status(local.status).json(local.data);
   } catch (err) {
     console.error("/api/admin/deposit error:", err);
     return res.status(500).json({ ok: false, msg: "Error depósito" });
   }
 });
 
-app.post("/api/admin/withdraw", ensureAdminAuth, async (req, res) => {
+app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, amount, note } = req.body || {};
-    if (!userId || !amount) {
+
+    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
       return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
     }
 
-    const proxy = CORE_API_URL
-      ? await proxyWithdraw(req, res, {
-          userId,
-          amount: Number(amount),
-          note: note || "Admin withdrawal",
-        })
-      : await localWithdraw({
-          userId,
-          amount: Number(amount),
-          note: note || "Admin withdrawal",
-        });
-
-    if (proxy && proxy.ok) {
-      io.emit("admin:balance-updated", { userId, amount: Number(amount), action: "withdraw" });
-      return res.status(proxy.status).json(proxy.data);
+    const numericAmount = normalizeNumber(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "amount inválido" });
     }
 
-    return res.status(proxy?.status || 500).json(proxy?.data || { ok: false, msg: "Error retiro" });
+    const remote = await proxyToCore(req, "/api/admin/withdraw", {
+      method: "POST",
+      body: {
+        userId,
+        amount: numericAmount,
+        note: note || "Admin withdrawal",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
+      const account = remote.data?.data?.account || remote.data?.account || null;
+      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
+      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+
+      emitStateUpdates(userId, { account, wallet }, null, tx);
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+      io.emit(`withdraw:${userId}`, "approved");
+
+      return res.status(remote.status).json(remote.data);
+    }
+
+    const local = await localWithdraw({
+      userId,
+      amount: numericAmount,
+      note: note || "Admin withdrawal",
+    });
+
+    return res.status(local.status).json(local.data);
   } catch (err) {
     console.error("/api/admin/withdraw error:", err);
     return res.status(500).json({ ok: false, msg: "Error retiro" });
-  }
-});
-
-/* ======================================================
-   ACCOUNT / TRANSACTIONS PÚBLICOS DEL PANEL
-====================================================== */
-app.get("/api/account", ensureAdminAuth, async (req, res) => {
-  try {
-    const user = await getTargetUserForAdmin(req, res);
-    if (!user) return;
-    const payload = await buildAccountForUser(user);
-    return res.json(payload);
-  } catch (err) {
-    console.error("/api/account error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
-  }
-});
-
-app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
-  try {
-    const userId = req.query.userId || null;
-    const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
-
-    if (userId) {
-      const txs = await loadTransactionsForUser(userId, limit);
-      return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
-    }
-
-    const txs = await Transaction.find({})
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean()
-      .exec()
-      .catch(() => []);
-
-    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
-  } catch (err) {
-    console.error("/api/transactions error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
   }
 });
 
@@ -1203,12 +1335,17 @@ app.get("/healthz", (req, res) => {
     adminApiKeyConfigured: !!ADMIN_API_KEY,
     adminEmailConfigured: !!ADMIN_EMAIL,
     adminTokenSecretConfigured: !!JWT_SECRET,
+    mongoConfigured: !!process.env.MONGO_URI,
   });
 });
 
 /* ======================================================
-   ERROR HANDLER
+   FALLBACKS
 ====================================================== */
+app.use("/api", (req, res) => {
+  res.status(404).json({ ok: false, msg: "API endpoint not found" });
+});
+
 app.use((err, req, res, next) => {
   console.error("Unhandled error (admin):", err);
   res.status(err.status || 500).json({
