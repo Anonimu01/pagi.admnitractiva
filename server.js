@@ -4,32 +4,38 @@ const cors = require("cors");
 const http = require("http");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
-const { io: ClientIO } = require("socket.io-client");
-const axios = require("axios");
 const path = require("path");
+const mongoose = require("mongoose");
+
+const connectDB = require("./config/db");
 
 const app = express();
 const server = http.createServer(app);
 
-/* ======================================================
-   CONFIG
-   ====================================================== */
-const CORE_API = process.env.CORE_API_URL;
-const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
-
-if (!CORE_API) {
-  console.error("❌ ERROR: CORE_API_URL no está definido");
-  process.exit(1);
+// ================= CONFIG SEGURA =================
+const CORE_API_URL = process.env.CORE_API_URL || null;
+if (!CORE_API_URL) {
+  console.warn("⚠️ CORE_API_URL no definido (modo local activo)");
 }
 
-/* ======================================================
-   MIDDLEWARES
-   ====================================================== */
-app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
+// ================= DB =================
+connectDB();
+
+mongoose.connection.on("connected", () => {
+  console.log("✅ Mongo conectado");
+});
+
+// ================= MIDDLEWARE =================
+const CLIENT_ORIGIN = process.env.ADMIN_CLIENT_URL || "*";
+
+app.use(cors({
+  origin: CLIENT_ORIGIN,
+  credentials: true
+}));
 
 app.use(rateLimit({
   windowMs: 60_000,
-  max: 300
+  max: 200
 }));
 
 app.use(express.json());
@@ -37,9 +43,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ======================================================
-   SOCKET.IO (ADMIN CLIENTES)
-   ====================================================== */
+// ================= SOCKET.IO =================
 const io = new Server(server, {
   cors: {
     origin: CLIENT_ORIGIN,
@@ -47,121 +51,84 @@ const io = new Server(server, {
   }
 });
 
-/* ======================================================
-   🔌 CONEXIÓN AL SERVER PRINCIPAL
-   ====================================================== */
-const coreSocket = ClientIO(CORE_API, {
-  transports: ["websocket"],
-  reconnection: true
+app.set("io", io);
+
+app.use((req, res, next) => {
+  req.io = io;
+  next();
 });
 
-coreSocket.on("connect", () => {
-  console.log("🟢 Conectado al server principal");
-});
-
-coreSocket.on("disconnect", () => {
-  console.warn("🔴 Desconectado del server principal");
-});
-
-/* 🔥 REENVIAR EVENTOS */
-[
-  "wallet_update",
-  "account_update",
-  "positions_update",
-  "transactions_update"
-].forEach(event => {
-  coreSocket.on(event, (data) => {
-    io.emit(event, data);
-  });
-});
-
-/* ======================================================
-   ADMIN AUTH
-   ====================================================== */
+// ================= LOGIN SIN BLOQUEO =================
 function ensureAdminKey(req, res, next) {
   if (!process.env.ADMIN_API_KEY) return next();
+
   const key = req.headers["x-admin-key"];
-  if (key !== process.env.ADMIN_API_KEY) {
+  if (!key || key !== process.env.ADMIN_API_KEY) {
     return res.status(403).json({ msg: "Admin key inválida" });
   }
   next();
 }
 
-/* ======================================================
-   PROXY REQUEST
-   ====================================================== */
-async function proxy(req, res, endpoint) {
+// ⚠️ IMPORTANTE: login queda SIN bloqueo
+const adminRoutes = require("./routes/admin.routes");
+app.use("/api/admin", adminRoutes);
+
+// ================= EJEMPLOS TIEMPO REAL =================
+
+// actualizar saldo
+app.post("/api/admin/update-balance", async (req, res) => {
   try {
-    const r = await axios({
-      method: req.method,
-      url: `${CORE_API}${endpoint}`,
-      data: req.body,
-      headers: {
-        "x-admin-api-key": process.env.ADMIN_API_KEY
-      }
-    });
+    const { userId, balance } = req.body;
 
-    return res.json(r.data);
+    // aquí iría tu lógica de DB
+    console.log("💰 saldo actualizado:", userId, balance);
+
+    // emitir al cliente
+    req.io.emit(`balance:${userId}`, balance);
+
+    res.json({ ok: true });
   } catch (err) {
-    console.error("Proxy error:", err?.response?.data || err.message);
-    return res.status(500).json({
-      ok: false,
-      error: err?.response?.data || err.message
-    });
+    res.status(500).json({ ok: false });
   }
-}
-
-/* ======================================================
-   ENDPOINTS ADMIN
-   ====================================================== */
-app.post("/api/admin/deposit", ensureAdminKey, (req, res) => {
-  proxy(req, res, "/api/admin/deposit");
 });
 
-app.post("/api/admin/withdraw", ensureAdminKey, (req, res) => {
-  proxy(req, res, "/api/admin/withdraw");
+// retiro aprobado
+app.post("/api/admin/withdraw-response", async (req, res) => {
+  try {
+    const { userId, status } = req.body;
+
+    console.log("🏦 retiro:", userId, status);
+
+    req.io.emit(`withdraw:${userId}`, status);
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false });
+  }
 });
 
-app.get("/api/admin/transactions", ensureAdminKey, (req, res) => {
-  const qs = req.url.split("?")[1] || "";
-  proxy(req, res, `/api/admin/transactions?${qs}`);
-});
-
-/* ======================================================
-   PANEL
-   ====================================================== */
+// ================= ROOT =================
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin.html"));
 });
 
-/* ======================================================
-   HEALTH
-   ====================================================== */
+// ================= HEALTH =================
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
-    core: CORE_API,
-    socket: coreSocket.connected
+    db: mongoose.connection.readyState
   });
 });
 
-/* ======================================================
-   START
-   ====================================================== */
+// ================= ERROR =================
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ msg: "Error servidor" });
+});
+
+// ================= START =================
 const PORT = process.env.PORT || 4000;
 
 server.listen(PORT, () => {
-  console.log("🔥 ADMIN SERVER:", PORT);
-  console.log("CORE:", CORE_API);
-});
-
-/* ======================================================
-   SOCKET ADMIN CLIENT
-   ====================================================== */
-io.on("connection", (socket) => {
-  console.log("🟢 Admin conectado:", socket.id);
-
-  socket.on("disconnect", () => {
-    console.log("🔴 Admin desconectado:", socket.id);
-  });
+  console.log("🔥 ADMIN RUNNING EN:", PORT);
 });
