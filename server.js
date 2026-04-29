@@ -4,6 +4,7 @@ const cors = require("cors");
 const http = require("http");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
+const fetch = require("node-fetch"); // 🔥 FIX IMPORTANTE
 
 const app = express();
 const server = http.createServer(app);
@@ -50,25 +51,29 @@ function ensureAdminKey(req, res, next) {
 }
 
 /* ======================================================
-   🔥 PROXY HELPER (REUTILIZABLE)
+   🔥 PROXY HELPER (CON COOKIES Y HEADERS)
 ====================================================== */
-async function proxyToCore(path, options = {}) {
+async function proxyToCore(req, path, options = {}) {
   try {
     const response = await fetch(`${CORE_API_URL}${path}`, {
-      ...options,
+      method: options.method || "GET",
       headers: {
         "Content-Type": "application/json",
-        "x-admin-api-key": process.env.ADMIN_API_KEY,
+        "x-admin-api-key": process.env.ADMIN_API_KEY || "",
+        cookie: req.headers.cookie || "", // 🔥 CLAVE PARA LOGIN
         ...(options.headers || {})
-      }
+      },
+      body: options.body
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     return {
       status: response.status,
-      data
+      data,
+      headers: response.headers
     };
+
   } catch (err) {
     console.error("❌ Proxy error:", err);
     return {
@@ -79,7 +84,37 @@ async function proxyToCore(path, options = {}) {
 }
 
 /* ======================================================
-   💰 DEPOSIT (REAL BACKEND)
+   🔐 LOGIN (ARREGLADO)
+====================================================== */
+app.post("/api/login", async (req, res) => {
+  const result = await proxyToCore(req, "/api/login", {
+    method: "POST",
+    body: JSON.stringify(req.body)
+  });
+
+  // 🔥 PASAR COOKIES AL FRONT
+  const setCookie = result.headers.get("set-cookie");
+  if (setCookie) {
+    res.setHeader("set-cookie", setCookie);
+  }
+
+  return res.status(result.status).json(result.data);
+});
+
+/* ======================================================
+   🔐 REGISTER (SI LO USAS)
+====================================================== */
+app.post("/api/register", async (req, res) => {
+  const result = await proxyToCore(req, "/api/register", {
+    method: "POST",
+    body: JSON.stringify(req.body)
+  });
+
+  return res.status(result.status).json(result.data);
+});
+
+/* ======================================================
+   💰 DEPOSIT
 ====================================================== */
 app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
   const { userId, amount, leverage } = req.body;
@@ -91,20 +126,16 @@ app.post("/api/admin/deposit", ensureAdminKey, async (req, res) => {
     });
   }
 
-  const result = await proxyToCore("/api/admin/deposit", {
+  const result = await proxyToCore(req, "/api/admin/deposit", {
     method: "POST",
-    body: JSON.stringify({
-      userId,
-      amount,
-      leverage
-    })
+    body: JSON.stringify({ userId, amount, leverage })
   });
 
   return res.status(result.status).json(result.data);
 });
 
 /* ======================================================
-   💸 WITHDRAW (REAL BACKEND)
+   💸 WITHDRAW
 ====================================================== */
 app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
   const { userId, amount } = req.body;
@@ -116,41 +147,29 @@ app.post("/api/admin/withdraw", ensureAdminKey, async (req, res) => {
     });
   }
 
-  const result = await proxyToCore("/api/admin/withdraw", {
+  const result = await proxyToCore(req, "/api/admin/withdraw", {
     method: "POST",
-    body: JSON.stringify({
-      userId,
-      amount
-    })
+    body: JSON.stringify({ userId, amount })
   });
 
   return res.status(result.status).json(result.data);
 });
 
 /* ======================================================
-   📊 GET ACCOUNT (VER SALDO REAL DEL CLIENTE)
+   📊 CUENTA (INDIVIDUAL)
 ====================================================== */
-app.get("/api/admin/account/:userId", ensureAdminKey, async (req, res) => {
-  const { userId } = req.params;
-
-  const result = await proxyToCore(`/api/admin/account/${userId}`, {
-    method: "GET"
-  });
+app.get("/api/account", async (req, res) => {
+  // 🔥 YA NO NECESITAS userId → backend usa sesión
+  const result = await proxyToCore(req, "/api/account");
 
   return res.status(result.status).json(result.data);
 });
 
 /* ======================================================
-   📜 HISTORIAL DE TRANSACCIONES
+   📜 HISTORIAL
 ====================================================== */
-app.get("/api/admin/transactions", ensureAdminKey, async (req, res) => {
-  const { userId } = req.query;
-
-  const query = userId ? `?userId=${userId}` : "";
-
-  const result = await proxyToCore(`/api/admin/transactions${query}`, {
-    method: "GET"
-  });
+app.get("/api/transactions", async (req, res) => {
+  const result = await proxyToCore(req, "/api/transactions");
 
   return res.status(result.status).json(result.data);
 });
