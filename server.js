@@ -676,10 +676,16 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
     return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
   }
 
+  const numericAmount = Math.abs(normalizeNumber(amount, 0));
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
+  }
+
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
+  const after = before + numericAmount;
 
-  wallet.balanceOwn = before + amount;
+  wallet.balanceOwn = after;
   wallet.balance = wallet.balanceOwn;
   wallet.currency = currency || wallet.currency || "USD";
 
@@ -704,7 +710,7 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
   const tx = await recordTransaction({
     user,
     type: "deposit",
-    amount,
+    amount: numericAmount,
     status: "completed",
     note,
     balanceBefore: before,
@@ -733,16 +739,21 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
   };
 }
 
-async function localWithdraw({ userId, amount, note }) {
+async function localWithdraw({ userId, amount, note, force = false }) {
   const user = await User.findById(userId).catch(() => null);
   if (!user) {
     return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
   }
 
+  const numericAmount = Math.abs(normalizeNumber(amount, 0));
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
+  }
+
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
 
-  if (before < amount) {
+  if (!force && before < numericAmount) {
     return {
       ok: false,
       status: 400,
@@ -750,7 +761,9 @@ async function localWithdraw({ userId, amount, note }) {
     };
   }
 
-  wallet.balanceOwn = before - amount;
+  const after = force ? Math.max(0, before - numericAmount) : before - numericAmount;
+
+  wallet.balanceOwn = after;
   wallet.balance = wallet.balanceOwn;
   wallet.equity = wallet.balanceOwn;
   wallet.freeMargin = Math.max(wallet.equity - (Number(wallet.marginUsed ?? 0) || 0), 0);
@@ -764,13 +777,13 @@ async function localWithdraw({ userId, amount, note }) {
 
   const tx = await recordTransaction({
     user,
-    type: "withdrawal",
-    amount: -Math.abs(amount),
+    type: force ? "adjustment" : "withdrawal",
+    amount: -numericAmount,
     status: "completed",
     note,
     balanceBefore: before,
     balanceAfter: wallet.balanceOwn,
-    meta: { source: "local-fallback" },
+    meta: { source: force ? "forced-local-fallback" : "local-fallback" },
     source: "admin-server.js/localWithdraw",
   });
 
@@ -782,7 +795,7 @@ async function localWithdraw({ userId, amount, note }) {
     status: 200,
     data: {
       ok: true,
-      msg: "Retiro aplicado",
+      msg: force ? "Saldo ajustado" : "Retiro aplicado",
       data: {
         balance: wallet.balanceOwn,
         transaction: tx,
@@ -799,7 +812,8 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 
   const wallet = await getWalletDocForUser(user._id);
   const currentBalance = getEffectiveBalance(user, wallet.toObject ? wallet.toObject() : wallet);
-  const delta = normalizeNumber(desiredBalance, 0) - currentBalance;
+  const targetBalance = Math.max(0, normalizeNumber(desiredBalance, currentBalance));
+  const delta = targetBalance - currentBalance;
 
   if (delta > 0) {
     const remote = await proxyToCore(req, "/api/admin/deposit", {
@@ -831,30 +845,59 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
   }
 
   if (delta < 0) {
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: {
-        userId,
-        amount: Math.abs(delta),
-        note: note || "Update balance",
-      },
-    });
+    const before = currentBalance;
 
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      return {
-        ok: true,
-        status: remote.status,
-        data: remote.data,
-      };
+    wallet.balanceOwn = targetBalance;
+    wallet.balance = targetBalance;
+    wallet.equity = targetBalance;
+    wallet.freeMargin = Math.max(targetBalance - (Number(wallet.marginUsed ?? 0) || 0), 0);
+    wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.balance = targetBalance;
+    user.updatedAt = new Date();
+    await user.save();
+
+    if (leverage !== undefined && leverage !== null && leverage !== "") {
+      const lev = Number(leverage) || 1;
+      wallet.leverageFactor = lev;
+      user.leverage = lev;
+      wallet.updatedAt = new Date();
+      user.updatedAt = new Date();
+      await wallet.save();
+      await user.save();
     }
 
-    const local = await localWithdraw({
-      userId,
-      amount: Math.abs(delta),
+    const tx = await recordTransaction({
+      user,
+      type: "adjustment",
+      amount: delta,
+      status: "completed",
       note: note || "Update balance",
+      balanceBefore: before,
+      balanceAfter: targetBalance,
+      meta: { source: "admin-update-balance", action: "set_balance" },
+      source: "admin-server.js/depositByDelta",
     });
-    return local;
+
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(userId, account, null, tx);
+
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        ok: true,
+        msg: "Saldo actualizado",
+        data: {
+          balance: targetBalance,
+          account: account.account,
+          wallet: account.wallet,
+          transaction: tx,
+        },
+      },
+    };
   }
 
   if (leverage !== undefined && leverage !== null && leverage !== "") {
