@@ -1,121 +1,523 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
+<meta charset="UTF-8" />
 <title>Admin — Control Total</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <script src="https://s3.tradingview.com/tv.js"></script>
 
 <style>
-body{
-  margin:0;
-  font-family:Inter,system-ui,Arial;
-  background:#0b0b0b;
-  color:#eaeaea;
+:root{
+  --bg:#0b0b0b;
+  --panel:#111;
+  --panel-2:#151515;
+  --border:#222;
+  --border-2:#2b2b2b;
+  --text:#eaeaea;
+  --muted:#999;
+  --gold:#d4af37;
+  --danger:#b83a3a;
+  --success:#24b36b;
+  --radius:14px;
+  --shadow:0 0 0 1px #1c1c1c;
 }
+
+*{
+  box-sizing:border-box;
+}
+
+html,body{
+  margin:0;
+  padding:0;
+  height:100%;
+  font-family:Inter,system-ui,Arial,sans-serif;
+  background:var(--bg);
+  color:var(--text);
+}
+
+body{
+  overflow:hidden;
+}
+
+/* HEADER */
 header{
-  padding:16px;
+  height:64px;
+  padding:0 16px;
   background:#111;
-  border-bottom:1px solid #222;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  position:sticky;
+  top:0;
+  z-index:100;
+}
+
+.header-left{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+}
+
+.brand{
   font-size:18px;
   font-weight:900;
-  color:#d4af37;
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
+  color:var(--gold);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
-.logout{
-  background:#b83a3a;
-  border:none;
-  padding:8px 14px;
-  border-radius:8px;
-  color:white;
+
+.menu-btn{
+  display:none;
+  background:#1a1a1a;
+  color:#fff;
+  border:1px solid #2a2a2a;
+  border-radius:10px;
+  padding:10px 12px;
   cursor:pointer;
+  font-weight:800;
 }
+
+.logout{
+  background:var(--danger);
+  border:none;
+  padding:10px 14px;
+  border-radius:10px;
+  color:#fff;
+  cursor:pointer;
+  font-weight:800;
+}
+
+/* LAYOUT */
 .layout{
   display:grid;
   grid-template-columns:300px 1fr;
-  height:calc(100vh - 60px);
+  height:calc(100vh - 64px);
+  min-height:0;
 }
+
+/* SIDEBAR */
 .sidebar{
-  border-right:1px solid #222;
+  border-right:1px solid var(--border);
   overflow:auto;
+  background:#0d0d0d;
+  min-height:0;
 }
-.sidebar div{
-  padding:12px;
+
+.sidebar-top{
+  position:sticky;
+  top:0;
+  z-index:10;
+  background:#0d0d0d;
+  border-bottom:1px solid var(--border);
+  padding:14px;
+}
+
+.search{
+  width:100%;
+  background:#151515;
+  color:#fff;
+  border:1px solid var(--border-2);
+  padding:12px 12px;
+  border-radius:12px;
+  outline:none;
+}
+
+.users-wrap{
+  padding:0;
+}
+
+.user-item{
+  padding:14px 14px;
   cursor:pointer;
-  border-bottom:1px solid #1a1a1a;
+  border-bottom:1px solid #191919;
+  transition:.18s ease;
 }
-.sidebar div:hover{
+
+.user-item:hover{
   background:#151515;
 }
+
+.user-name{
+  font-size:14px;
+  font-weight:800;
+  margin-bottom:4px;
+  word-break:break-word;
+}
+
+.user-meta{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  font-size:12px;
+  color:var(--muted);
+  flex-wrap:wrap;
+}
+
+.user-email{
+  font-size:12px;
+  color:#bdbdbd;
+  word-break:break-word;
+}
+
+/* MAIN */
 .main{
-  padding:20px;
+  padding:18px;
   overflow:auto;
+  min-width:0;
+  min-height:0;
 }
+
+.page-shell{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:16px;
+}
+
 .card{
-  background:#111;
-  padding:16px;
-  border-radius:12px;
-  margin-bottom:16px;
-  box-shadow:0 0 0 1px #1c1c1c;
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:18px;
 }
+
+.card-title{
+  font-size:15px;
+  font-weight:900;
+  color:var(--gold);
+  margin-bottom:14px;
+}
+
+.profile-head{
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+  align-items:flex-start;
+  flex-wrap:wrap;
+}
+
+.profile-head h2{
+  margin:0 0 8px 0;
+  font-size:22px;
+  line-height:1.2;
+  word-break:break-word;
+}
+
+.small{
+  font-size:12px;
+  color:var(--muted);
+}
+
+.balance-box{
+  font-size:32px;
+  font-weight:900;
+  color:var(--gold);
+  line-height:1;
+  text-align:right;
+}
+
+.balance-label{
+  font-size:12px;
+  color:var(--muted);
+  text-align:right;
+  margin-top:4px;
+}
+
+.info-list{
+  display:grid;
+  gap:10px;
+}
+
+.info-row{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  padding:10px 12px;
+  background:#141414;
+  border:1px solid #202020;
+  border-radius:12px;
+}
+
+.info-label{
+  color:#a3a3a3;
+}
+
+.info-value{
+  color:#fff;
+  word-break:break-word;
+  text-align:right;
+}
+
+/* FORM */
+.form-group{
+  margin-bottom:14px;
+}
+
+label{
+  display:block;
+  margin-bottom:8px;
+  color:#aaa;
+  font-size:13px;
+}
+
 input,select,button{
+  width:100%;
   background:#0f0f0f;
   color:#fff;
   border:1px solid #333;
-  padding:8px;
-  border-radius:6px;
+  padding:12px;
+  border-radius:10px;
+  outline:none;
+  font-size:14px;
 }
-button{cursor:pointer;font-weight:800}
-.primary{background:#d4af37;color:#000}
-.danger{background:#b83a3a}
-label{font-size:13px;color:#aaa}
-.center{text-align:center;color:#777;margin-top:50px}
-.loader{text-align:center;padding:30px;color:#888}
-.error{color:#ff6b6b;text-align:center;margin-top:20px}
-.small{font-size:12px;color:#999}
+
+button{
+  cursor:pointer;
+  font-weight:800;
+  transition:.18s ease;
+}
+
+button:hover{
+  transform:translateY(-1px);
+}
+
+.primary{
+  background:var(--gold);
+  color:#000;
+  border:none;
+}
+
+.danger{
+  background:var(--danger);
+  border:none;
+  color:#fff;
+}
+
+.success{
+  background:var(--success);
+  border:none;
+  color:#fff;
+}
+
+.actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.center{
+  text-align:center;
+  color:#777;
+  padding:34px 16px;
+}
+
+.loader{
+  text-align:center;
+  padding:26px 16px;
+  color:#888;
+}
+
+.error{
+  color:#ff6b6b;
+  text-align:center;
+  margin-top:20px;
+  padding:16px;
+}
+
+.chart-box{
+  height:430px;
+  overflow:hidden;
+  border-radius:12px;
+  background:#101010;
+  border:1px solid #202020;
+}
+
+.withdraw-item{
+  background:#141414;
+  border:1px solid #242424;
+  border-radius:12px;
+  padding:14px;
+  margin-bottom:12px;
+}
+
+.withdraw-amount{
+  font-size:18px;
+  font-weight:900;
+  margin-bottom:12px;
+}
+
+.withdraw-buttons{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+/* MOBILE */
+.mobile-backdrop{
+  display:none;
+}
+
+@media (max-width: 980px){
+  body{
+    overflow:auto;
+  }
+
+  .menu-btn{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  .layout{
+    grid-template-columns:1fr;
+    height:auto;
+    min-height:calc(100vh - 64px);
+  }
+
+  .sidebar{
+    position:fixed;
+    top:64px;
+    left:-100%;
+    width:min(320px, 88vw);
+    height:calc(100vh - 64px);
+    z-index:999;
+    transition:left .25s ease;
+    background:#0d0d0d;
+  }
+
+  .sidebar.active{
+    left:0;
+  }
+
+  .mobile-backdrop{
+    display:block;
+    position:fixed;
+    inset:64px 0 0 0;
+    background:rgba(0,0,0,.45);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .2s ease;
+    z-index:998;
+  }
+
+  .mobile-backdrop.active{
+    opacity:1;
+    pointer-events:auto;
+  }
+
+  .main{
+    padding:14px;
+  }
+
+  .grid{
+    grid-template-columns:1fr;
+  }
+
+  .chart-box{
+    height:360px;
+  }
+
+  .actions,
+  .withdraw-buttons{
+    grid-template-columns:1fr;
+  }
+
+  .balance-box,
+  .balance-label{
+    text-align:left;
+  }
+}
+
+@media (max-width: 520px){
+  header{
+    padding:0 12px;
+  }
+
+  .brand{
+    font-size:16px;
+  }
+
+  .logout{
+    padding:9px 12px;
+  }
+
+  .main{
+    padding:12px;
+  }
+
+  .card{
+    padding:14px;
+    border-radius:12px;
+  }
+
+  .chart-box{
+    height:320px;
+  }
+}
 </style>
 </head>
 
 <body>
 
 <header>
-<span>🧑‍💼 PANEL ADMINISTRACIÓN</span>
-<button class="logout" onclick="logout()">Cerrar sesión</button>
+  <div class="header-left">
+    <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+    <span class="brand">🧑‍💼 PANEL ADMINISTRACIÓN</span>
+  </div>
+  <button class="logout" onclick="logout()">Cerrar sesión</button>
 </header>
+
+<div class="mobile-backdrop" id="backdrop" onclick="closeSidebar()"></div>
 
 <div class="layout">
 
-<div class="sidebar" id="usersList">
-<div class="loader">Cargando usuarios...</div>
-</div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <input
+        type="text"
+        class="search"
+        id="searchUsers"
+        placeholder="Buscar usuario..."
+        oninput="filterUsers(this.value)"
+      />
+    </div>
 
-<div class="main" id="profilePanel">
-<div class="center">Selecciona un usuario</div>
-</div>
+    <div class="users-wrap" id="usersList">
+      <div class="loader">Cargando usuarios...</div>
+    </div>
+  </aside>
+
+  <main class="main" id="profilePanel">
+    <div class="center">Selecciona un usuario</div>
+  </main>
 
 </div>
 
 <script>
-
 /* ================= API AUTO DETECT ================= */
-/* Detecta si estás en Render (deploy) o en local y arma la base /api */
 const API = location.hostname.includes("render.com")
   ? location.origin + "/api"
   : "http://localhost:4000/api";
 
-/* ================= TOKEN (soporta admin_token o token) ================= */
-/* Si no existe token redirige a login (no exponemos keys al frontend) */
+/* ================= TOKEN ================= */
 const token = localStorage.getItem("admin_token") || localStorage.getItem("token");
 
 if(!token){
-  // si no hay token, redirige a login del panel admin
   location.href = "login.html";
 }
 
-/* headers dinámicos (sólo añadimos Authorization si tenemos token) */
 const headers = {
   "Content-Type": "application/json",
   ...(token ? { "Authorization": "Bearer " + token } : {})
@@ -123,182 +525,322 @@ const headers = {
 
 let currentUser = null;
 let tvWidget = null;
+let allUsers = [];
 
-/* ================= safeFetch: manejo robusto de respuestas ================= */
+/* ================= SIDEBAR MOBILE ================= */
+function toggleSidebar(){
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("backdrop");
+  sidebar.classList.toggle("active");
+  backdrop.classList.toggle("active");
+}
+
+function closeSidebar(){
+  document.getElementById("sidebar").classList.remove("active");
+  document.getElementById("backdrop").classList.remove("active");
+}
+
+window.addEventListener("resize", () => {
+  if(window.innerWidth > 980){
+    closeSidebar();
+  }
+});
+
+/* ================= SAFE FETCH ================= */
 async function safeFetch(url, options = {}){
   try{
-    const opt = Object.assign({}, options);
-    opt.headers = Object.assign({}, headers, options.headers || {});
+    const opt = {
+      ...options,
+      headers: {
+        ...headers,
+        ...(options.headers || {})
+      }
+    };
 
     const res = await fetch(url, opt);
 
-    // Si es 401 -> logout automático
     if(res.status === 401){
       logout();
       return null;
     }
 
-    // Intentar parseo seguro; algunos endpoints devuelven 204 No Content
     if(res.status === 204) return {};
 
-    let json = null;
-    try {
-      json = await res.json();
-    } catch(parseErr){
-      // si no es JSON devolvemos texto
+    let data;
+    try{
+      data = await res.json();
+    }catch{
       try{
-        const txt = await res.text();
-        return txt;
-      }catch(e){
-        return null;
+        data = await res.text();
+      }catch{
+        data = null;
       }
     }
 
     if(!res.ok){
-      // si la API devuelve objeto con detalles, lo mostramos en consola y UI
-      console.error('API error', res.status, json);
-      // mostrar mensaje en panel principal si existe
-      document.getElementById("profilePanel").innerHTML =
-        `<div class="error">Error del servidor: ${json?.msg || res.statusText}</div>`;
+      console.error("API error", res.status, data);
+      document.getElementById("profilePanel").innerHTML = `
+        <div class="error">
+          Error del servidor: ${escapeHtml(data?.msg || data?.message || res.statusText || "Desconocido")}
+        </div>
+      `;
       return null;
     }
 
-    return json;
+    return data;
 
   }catch(e){
     console.error("Network error:", e);
-    document.getElementById("profilePanel").innerHTML =
-      `<div class="error">Error conectando al servidor</div>`;
+    document.getElementById("profilePanel").innerHTML = `
+      <div class="error">Error conectando al servidor</div>
+    `;
     return null;
   }
 }
 
-/* ================= utilidad: extraer array de usuarios de respuestas variadas ================= */
-function extractUsersFromResponse(resp){
-  if(!resp) return null;
-  if(Array.isArray(resp)) return resp;
-  if(resp.users && Array.isArray(resp.users)) return resp.users;
-  if(resp.data && Array.isArray(resp.data)) return resp.data;
-  if(resp.result && Array.isArray(resp.result)) return resp.result;
-  // si la respuesta misma tiene ok:true y users en otro nivel
-  if(resp.ok && Array.isArray(resp.users)) return resp.users;
-  return null;
-}
-
-/* ================= CARGAR USUARIOS ================= */
-async function loadUsers(){
-
-  const list = document.getElementById("usersList");
-  list.innerHTML = '<div class="loader">Cargando...</div>';
-
-  const resp = await safeFetch(API + "/admin/users", { headers });
-  if(!resp) return;
-
-  const users = extractUsersFromResponse(resp);
-  if(!users){
-    // Si la respuesta no tiene users, mostramos la estructura para debugging
-    list.innerHTML = `<div class="error">Respuesta inesperada del servidor. Revisa la consola.</div>`;
-    console.warn('Respuesta /admin/users:', resp);
-    return;
-  }
-
-  list.innerHTML = "";
-
-  if(users.length === 0){
-    list.innerHTML = '<div class="center">No hay usuarios</div>';
-    return;
-  }
-
-  users.forEach(u=>{
-    const div = document.createElement("div");
-    const bal = (typeof u.balance !== "undefined") ? u.balance : 0;
-    const email = u.email || u.emailAddress || u.correo || "sin-email";
-    div.innerHTML = `
-      <strong class="small">${escapeHtml(email)}</strong><br>
-      <span class="small">Saldo: ${escapeHtml(String(bal))}</span>
-    `;
-    div.onclick = ()=> openUser(u);
-    list.appendChild(div);
-  });
-}
-
-/* ================= ESCAPE HTML PARA PREVENIR XSS ================= */
+/* ================= HELPERS ================= */
 function escapeHtml(s){
   return String(s || '').replace(/[&<>"']/g, function(m){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
   });
 }
 
-/* ================= PERFIL ================= */
-function openUser(u){
+function extractUsersFromResponse(resp){
+  if(!resp) return [];
+  if(Array.isArray(resp)) return resp;
+  if(Array.isArray(resp.users)) return resp.users;
+  if(Array.isArray(resp.data)) return resp.data;
+  if(Array.isArray(resp.result)) return resp.result;
+  if(resp.ok && Array.isArray(resp.users)) return resp.users;
+  return [];
+}
 
+function getUserId(u){
+  return u?._id || u?.id || "";
+}
+
+function getUserEmail(u){
+  return u?.email || u?.emailAddress || u?.correo || "sin-email";
+}
+
+function getUserName(u){
+  return u?.nombre || u?.name || u?.fullName || "";
+}
+
+function getUserPhone(u){
+  return u?.telefono || u?.phone || u?.mobile || "";
+}
+
+function getUserAddress(u){
+  return u?.direccion || u?.address || "";
+}
+
+/* ================= LOAD USERS ================= */
+async function loadUsers(){
+  const list = document.getElementById("usersList");
+  list.innerHTML = `<div class="loader">Cargando...</div>`;
+
+  const resp = await safeFetch(API + "/admin/users", { headers });
+  if(!resp) return;
+
+  allUsers = extractUsersFromResponse(resp);
+  renderUsers(allUsers);
+}
+
+function renderUsers(users){
+  const list = document.getElementById("usersList");
+  list.innerHTML = "";
+
+  if(!users.length){
+    list.innerHTML = `<div class="center">No hay usuarios</div>`;
+    return;
+  }
+
+  users.forEach(u => {
+    const email = getUserEmail(u);
+    const name = getUserName(u);
+    const bal = typeof u.balance !== "undefined" ? u.balance : 0;
+    const item = document.createElement("div");
+    item.className = "user-item";
+
+    item.innerHTML = `
+      <div class="user-name">${escapeHtml(name || email)}</div>
+      <div class="user-email">${escapeHtml(email)}</div>
+      <div class="user-meta">
+        <span>Saldo: ${escapeHtml(String(bal))}</span>
+        <span>x${escapeHtml(String(typeof u.leverage !== "undefined" ? u.leverage : 1))}</span>
+      </div>
+    `;
+
+    item.onclick = () => {
+      openUser(u);
+      if(window.innerWidth <= 980) closeSidebar();
+    };
+
+    list.appendChild(item);
+  });
+}
+
+function filterUsers(text){
+  const t = String(text || "").toLowerCase().trim();
+  if(!t){
+    renderUsers(allUsers);
+    return;
+  }
+
+  const filtered = allUsers.filter(u => {
+    const values = [
+      getUserName(u),
+      getUserEmail(u),
+      getUserPhone(u),
+      getUserAddress(u),
+      String(u.balance ?? ""),
+      String(u.leverage ?? "")
+    ].join(" ").toLowerCase();
+
+    return values.includes(t);
+  });
+
+  renderUsers(filtered);
+}
+
+/* ================= OPEN USER ================= */
+function openUser(u){
   currentUser = u;
 
-  const userEmail = escapeHtml(u.email || u.emailAddress || u.correo || "");
-  const userId = escapeHtml(u._id || u.id || "");
-  const userBalance = typeof u.balance !== 'undefined' ? u.balance : 0;
-  const userLeverage = typeof u.leverage !== 'undefined' ? u.leverage : 1;
+  const userId = getUserId(u);
+  const userEmail = getUserEmail(u);
+  const userName = getUserName(u);
+  const userPhone = getUserPhone(u);
+  const userAddress = getUserAddress(u);
+  const userBalance = typeof u.balance !== "undefined" ? u.balance : 0;
+  const userLeverage = typeof u.leverage !== "undefined" ? u.leverage : 50;
+  const userStatus = u.status || u.estado || "Activo";
 
   document.getElementById("profilePanel").innerHTML = `
+    <div class="page-shell">
 
-<div class="card">
-  <h2>${userEmail}</h2>
-  <p class="small">ID: ${userId}</p>
-</div>
+      <div class="card">
+        <div class="profile-head">
+          <div>
+            <h2>${escapeHtml(userName || userEmail)}</h2>
+            <div class="small">Correo: ${escapeHtml(userEmail)}</div>
+            <div class="small">ID: ${escapeHtml(userId)}</div>
+          </div>
 
-<div class="card">
-  <label>Saldo</label><br>
-  <input id="balance" type="number" value="${escapeHtml(String(userBalance))}">
-  <button class="primary" onclick="updateBalance()">Actualizar</button>
-</div>
+          <div>
+            <div class="balance-box">$${escapeHtml(String(userBalance))}</div>
+            <div class="balance-label">Saldo actual</div>
+          </div>
+        </div>
+      </div>
 
-<div class="card">
-  <label>Leverage</label><br>
-  <select id="leverage">
-    ${[1,5,10,20,50].map(n=>`<option value="${n}" ${Number(userLeverage)===Number(n)?"selected":""}>${n}</option>`).join("")}
-  </select>
-  <button class="primary" onclick="updateLeverage()">Guardar</button>
-</div>
+      <div class="grid">
 
-<div class="card">
-  <label>Símbolo gráfico</label><br>
-  <input id="symbolInput" value="BINANCE:BTCUSDT">
-  <button class="primary" onclick="loadChart()">Cargar gráfico</button>
-</div>
+        <div class="card">
+          <div class="card-title">Información del Cliente</div>
 
-<div class="card">
-  <div id="tv_chart" style="height:420px"></div>
-</div>
+          <div class="info-list">
+            <div class="info-row">
+              <span class="info-label">Nombre</span>
+              <span class="info-value">${escapeHtml(userName || "N/A")}</span>
+            </div>
 
-<div class="card">
-  <h3>Retiros pendientes</h3>
-  <div id="withdraws">Cargando...</div>
-</div>
-`;
+            <div class="info-row">
+              <span class="info-label">Correo</span>
+              <span class="info-value">${escapeHtml(userEmail || "N/A")}</span>
+            </div>
 
-  loadWithdraws(u._id || u.id);
-  // carga el chart un poco después para asegurar que el contenedor exista
+            <div class="info-row">
+              <span class="info-label">Teléfono</span>
+              <span class="info-value">${escapeHtml(userPhone || "N/A")}</span>
+            </div>
+
+            <div class="info-row">
+              <span class="info-label">Dirección</span>
+              <span class="info-value">${escapeHtml(userAddress || "N/A")}</span>
+            </div>
+
+            <div class="info-row">
+              <span class="info-label">Estado</span>
+              <span class="info-value">${escapeHtml(userStatus)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Actualizar Saldo</div>
+
+          <div class="form-group">
+            <label for="balance">Nuevo saldo</label>
+            <input id="balance" type="number" step="0.01" value="${escapeHtml(String(userBalance))}" />
+          </div>
+
+          <button class="primary" onclick="updateBalance()">Guardar saldo</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Apalancamiento</div>
+
+          <div class="form-group">
+            <label for="leverage">
+              Escribe una cantidad entre 50 y 100000
+            </label>
+            <input
+              id="leverage"
+              type="number"
+              min="50"
+              max="100000"
+              step="1"
+              value="${escapeHtml(String(userLeverage))}"
+            />
+          </div>
+
+          <button class="primary" onclick="updateLeverage()">Guardar apalancamiento</button>
+        </div>
+
+      </div>
+
+      <div class="card">
+        <div class="card-title">Gráfico</div>
+
+        <div class="form-group">
+          <label for="symbolInput">Símbolo gráfico</label>
+          <input id="symbolInput" value="BINANCE:BTCUSDT" />
+        </div>
+
+        <button class="primary" onclick="loadChart()">Cargar gráfico</button>
+
+        <div style="height:14px"></div>
+        <div id="tv_chart" class="chart-box"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Retiros pendientes</div>
+        <div id="withdraws">Cargando...</div>
+      </div>
+
+    </div>
+  `;
+
+  loadWithdraws(userId);
   setTimeout(loadChart, 300);
 }
 
-/* ================= CHART (TradingView) ================= */
+/* ================= TRADINGVIEW ================= */
 function loadChart(){
   const symbolEl = document.getElementById("symbolInput");
   if(!symbolEl) return;
+
   const symbol = symbolEl.value || "BINANCE:BTCUSDT";
 
-  // eliminar widget anterior si existe (TradingView provee 'remove' en algunos entornos)
   try{
     if(tvWidget && typeof tvWidget.remove === "function"){
       tvWidget.remove();
-    } else if (tvWidget && tvWidget.container_id){
-      const container = document.getElementById(tvWidget.container_id);
-      if(container) container.innerHTML = '';
     }
-  }catch(e){/* ignore */ }
+  }catch(e){}
 
   try{
-    // inicializar TradingView
     tvWidget = new TradingView.widget({
       container_id: "tv_chart",
       symbol,
@@ -310,7 +852,7 @@ function loadChart(){
       toolbar_bg: "#111",
       enable_publishing: false,
       allow_symbol_change: true,
-      height: 420
+      height: 430
     });
   }catch(err){
     console.warn("TradingView init failed:", err);
@@ -319,78 +861,78 @@ function loadChart(){
   }
 }
 
-/* ================= ACTUALIZAR SALDO ================= */
+/* ================= UPDATE BALANCE ================= */
 async function updateBalance(){
   if(!currentUser) return;
+
   const balance = document.getElementById("balance").value;
 
   const resp = await safeFetch(API + "/admin/update-balance", {
     method: "POST",
-    headers,
     body: JSON.stringify({
-      userId: currentUser._id || currentUser.id,
+      userId: getUserId(currentUser),
       balance
     })
   });
 
   if(resp){
-    // refrescar lista y seleccionar nuevamente al usuario (para ver cambios)
     await loadUsers();
-    // intentar volver a seleccionar el usuario por id
-    // (si el backend devuelve la lista actualizada, loadUsers la habrá actualizado)
+    openUser(currentUser);
   }
 }
 
-/* ================= LEVERAGE ================= */
+/* ================= UPDATE LEVERAGE ================= */
 async function updateLeverage(){
   if(!currentUser) return;
-  const leverage = document.getElementById("leverage").value;
+
+  const leverage = Number(document.getElementById("leverage").value);
+
+  if(Number.isNaN(leverage) || leverage < 50 || leverage > 100000){
+    alert("El apalancamiento debe estar entre 50 y 100000.");
+    return;
+  }
 
   const resp = await safeFetch(API + "/admin/update-leverage", {
     method: "POST",
-    headers,
     body: JSON.stringify({
-      userId: currentUser._id || currentUser.id,
+      userId: getUserId(currentUser),
       leverage
     })
   });
 
   if(resp){
     await loadUsers();
+    openUser(currentUser);
   }
 }
 
-/* ================= RETIROS ================= */
+/* ================= WITHDRAWS ================= */
 async function loadWithdraws(id){
-
   const box = document.getElementById("withdraws");
   box.innerHTML = "Cargando...";
 
   const data = await safeFetch(API + "/admin/withdraws/" + encodeURIComponent(id), { headers });
   if(!data) return;
 
-  // Si la respuesta contiene un objeto con 'withdraws' extraer la lista
-  const list = Array.isArray(data) ? data : (data.withdraws || data.data || data.result || null);
-  if(!list){
-    box.innerHTML = '<span class="small">Respuesta inesperada del servidor</span>';
-    console.warn('/admin/withdraws response', data);
-    return;
-  }
-
+  const list = Array.isArray(data) ? data : (data.withdraws || data.data || data.result || []);
   box.innerHTML = "";
 
-  if(list.length === 0){
-    box.innerHTML = '<span style="color:#777">Sin solicitudes</span>';
+  if(!Array.isArray(list) || list.length === 0){
+    box.innerHTML = `<div class="small">Sin solicitudes</div>`;
     return;
   }
 
-  list.forEach(w=>{
+  list.forEach(w => {
     const div = document.createElement("div");
-    div.className = "card";
+    div.className = "withdraw-item";
     div.innerHTML = `
-      <p>Monto: ${escapeHtml(String(w.amount || w.monto || 0))}</p>
-      <button class="primary" onclick="approveWithdraw('${w._id || w.id}')">Aprobar</button>
-      <button class="danger" onclick="rejectWithdraw('${w._id || w.id}')">Rechazar</button>
+      <div class="withdraw-amount">
+        Monto: $${escapeHtml(String(w.amount || w.monto || 0))}
+      </div>
+      <div class="withdraw-buttons">
+        <button class="success" onclick="approveWithdraw('${w._id || w.id || ""}')">Aprobar</button>
+        <button class="danger" onclick="rejectWithdraw('${w._id || w.id || ""}')">Rechazar</button>
+      </div>
     `;
     box.appendChild(div);
   });
@@ -400,34 +942,29 @@ async function approveWithdraw(id){
   if(!id) return;
   const resp = await safeFetch(API + "/admin/withdraw/approve", {
     method: "POST",
-    headers,
     body: JSON.stringify({ id })
   });
-  if(resp) loadWithdraws(currentUser._id || currentUser.id);
+  if(resp && currentUser) loadWithdraws(getUserId(currentUser));
 }
 
 async function rejectWithdraw(id){
   if(!id) return;
   const resp = await safeFetch(API + "/admin/withdraw/reject", {
     method: "POST",
-    headers,
     body: JSON.stringify({ id })
   });
-  if(resp) loadWithdraws(currentUser._id || currentUser.id);
+  if(resp && currentUser) loadWithdraws(getUserId(currentUser));
 }
 
 /* ================= LOGOUT ================= */
 function logout(){
   localStorage.removeItem("admin_token");
-  // si existiera token normal de usuario, lo dejamos intacto solo si es necesario;
-  // pero también podemos remover 'token' si quieres cerrar sesión completamente:
   localStorage.removeItem("token");
   location.href = "login.html";
 }
 
 /* ================= INIT ================= */
 loadUsers();
-
 </script>
 
 </body>
