@@ -43,6 +43,8 @@ const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
 const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
 const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
 const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
+const adminWithdrawRoutes = require("./routes/adminWithdrawRoutes");
+
 
 if (!CORE_API_URL) {
   console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
@@ -270,6 +272,7 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/api/admin", adminWithdrawRoutes);
 
 /* ======================================================
    SOCKET.IO
