@@ -114,6 +114,45 @@ const io = new Server(server, {
 app.set("io", io);
 app.use((req, res, next) => { req.io = io; next(); });
 
+function getCookie(req, name) {
+  const cookieHeader = req.headers.cookie || "";
+  for (const part of cookieHeader.split(";").map(p => p.trim())) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const k = decodeURIComponent(part.slice(0, idx).trim());
+    const v = decodeURIComponent(part.slice(idx + 1).trim());
+    if (k === name) return v;
+  }
+  return null;
+}
+
+function isAdminTokenValid(req) {
+  const auth = req.headers.authorization || req.headers.Authorization || "";
+  const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+  const tokenFromCookie = getCookie(req, "admin_token");
+  const token = bearer || tokenFromCookie;
+  if (!token) return false;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return !!decoded && (decoded.admin === true || decoded.role === "admin");
+  } catch {
+    return false;
+  }
+}
+
+function ensureAdminAuth(req, res, next) {
+  try {
+    if (ADMIN_API_KEY) {
+      const key = req.headers["x-admin-api-key"] || req.headers["x-admin-key"] || req.headers["admin-key"] || "";
+      if (key && key === ADMIN_API_KEY) return next();
+    }
+    if (isAdminTokenValid(req)) return next();
+    return res.status(401).json({ ok: false, msg: "No autorizado" });
+  } catch {
+    return res.status(401).json({ ok: false, msg: "No autorizado" });
+  }
+}
+
 // Aquí se deja igual que el server cliente: joinWithdrawRoom, conexión socket, etc.
 
 /* ======================================================
