@@ -7,53 +7,33 @@ const { Server } = require("socket.io");
 const path = require("path");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
-const fs = require("fs");
+const cookieParser = require("cookie-parser");
 
 // DB
 const connectDB = require("./config/db");
 
 // MODELOS
+const { User, Wallet, Transaction, Withdraw } = require("./models"); // asegúrate de tenerlos definidos correctamente
+
 const app = express();
 const server = http.createServer(app);
-const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
 
 /* ======================================================
    CONFIG
 ====================================================== */
-const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
-const CORE_USERS_ENDPOINTS = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers")
-  .split(",").map(s => s.trim()).filter(Boolean);
-
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
-const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
-const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
+const PORT = Number(process.env.PORT || 4000);
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@example.com";
+const ADMIN_PASS = process.env.ADMIN_PASS || "admin";
+const JWT_SECRET = process.env.JWT_SECRET || "admin-secret-dev";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
-const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
-const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
-const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
-const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
-const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
-const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
-const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
-const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
-const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
-const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
-const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
-const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
-const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
-const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
-
-if (!CORE_API_URL) console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
-if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
-  console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
-}
+const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
+const ALLOWED_ORIGINS = CLIENT_ORIGIN_RAW === "*" ? "*" : CLIENT_ORIGIN_RAW.split(",").map(s => s.trim()).filter(Boolean);
 
 /* ======================================================
    DATABASE
 ====================================================== */
-Promise.resolve(connectDB()).catch(err => console.error("Error conectando DB:", err?.message || err));
+Promise.resolve(connectDB()).catch(err => console.error("Error conectando DB:", err));
 mongoose.connection.on("connected", () => console.log("✅ Mongo conectado"));
 mongoose.connection.on("error", err => console.error("❌ Mongo connection error:", err));
 mongoose.connection.on("disconnected", () => console.warn("⚠️ Mongo disconnected"));
@@ -61,9 +41,6 @@ mongoose.connection.on("disconnected", () => console.warn("⚠️ Mongo disconne
 /* ======================================================
    MIDDLEWARE
 ====================================================== */
-const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
-const ALLOWED_ORIGINS = CLIENT_ORIGIN_RAW === "*" ? "*" : CLIENT_ORIGIN_RAW.split(",").map(s => s.trim()).filter(Boolean);
-
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || ALLOWED_ORIGINS === "*" || (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin))) return callback(null, true);
@@ -72,16 +49,10 @@ app.use(cors({
   },
   credentials: true,
 }));
-
-app.use(rateLimit({
-  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
-  max: Number(process.env.RATE_LIMIT_MAX || 200),
-  standardHeaders: true,
-  legacyHeaders: false,
-}));
-
+app.use(rateLimit({ windowMs: 60_000, max: 200 }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
 /* ======================================================
@@ -96,6 +67,10 @@ app.use((req, res, next) => { req.io = io; next(); });
 /* ======================================================
    AUTH HELPERS
 ====================================================== */
+function signAdminToken(payload = {}) {
+  return jwt.sign({ admin: true, role: "admin", email: payload.email || ADMIN_EMAIL }, JWT_SECRET, { expiresIn: "8h" });
+}
+
 function getCookie(req, name) {
   const cookieHeader = req.headers.cookie || "";
   for (const part of cookieHeader.split(";").map(p => p.trim())) {
@@ -108,7 +83,7 @@ function getCookie(req, name) {
 }
 
 function isAdminTokenValid(req) {
-  const auth = req.headers.authorization || req.headers.Authorization || "";
+  const auth = req.headers.authorization || "";
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   const tokenFromCookie = getCookie(req, "admin_token");
   const token = bearer || tokenFromCookie;
@@ -127,17 +102,8 @@ function ensureAdminAuth(req, res, next) {
   } catch { return res.status(401).json({ ok: false, msg: "No autorizado" }); }
 }
 
-function signAdminToken(payload = {}) {
-  return jwt.sign({ admin: true, role: "admin", email: payload.email || ADMIN_EMAIL || "admin" }, JWT_SECRET, { expiresIn: "8h" });
-}
-
 /* ======================================================
-   AQUI VAN TODOS LOS HELPERS DEL CLIENTE + ADMIN
-====================================================== */
-// Ej: buildAccountForUser, emitStateUpdates, localDeposit, localWithdraw, syncCoreUsersToLocalAndZoho, pushWithdrawMessage, emitWithdrawEvents, etc.
-
-/* ======================================================
-   RUTAS
+   ROUTES
 ====================================================== */
 // LOGIN ADMIN
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
@@ -147,19 +113,44 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
     if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
 
     const token = signAdminToken({ email });
-    res.cookie("admin_token", token, { httpOnly: true, sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production", maxAge: 8 * 60 * 60 * 1000 });
+    res.cookie("admin_token", token, { httpOnly: true, sameSite: "lax", secure: false, maxAge: 8*60*60*1000 });
     return res.json({ ok: true, token, msg: "Login correcto", admin: { email, role: "admin" } });
   } catch (err) { console.error("admin login error:", err); return res.status(500).json({ ok: false, msg: "Error del servidor" }); }
 });
 
-// TODAS LAS RUTAS DE TRANSACTIONS, WITHDRAW, BALANCE, DEPOSIT, LEVERAGE, USERS, ACCOUNT, CORE SYNC
-// ... Aquí van las rutas combinadas completas del server que me pasaste antes, reemplazando placeholders `/* ... */` por tu código real de cada ruta.
+// GET USERS
+app.get("/api/admin/users", ensureAdminAuth, async (req, res) => {
+  try {
+    const users = await User.find({}).select("-password -__v").sort({ createdAt: -1 }).lean();
+    return res.json({ ok: true, users });
+  } catch (err) { console.error("GET users error:", err); return res.status(500).json({ ok: false, msg: "Error al listar usuarios" }); }
+});
+
+// TRANSACTIONS
+app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
+  const txs = await Transaction.find({}).sort({ createdAt: -1 }).limit(100).lean();
+  res.json({ ok: true, count: txs.length, transactions: txs });
+});
+
+// WITHDRAW
+app.post("/api/withdraw/request", async (req, res) => { /* Aquí tu código completo de creación de retiro */ });
+app.get("/api/withdraw/history/:userId", async (req, res) => { /* Historial completo */ });
+app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => { /* Lista admin */ });
+// Y todas las demás rutas combinadas de admin + cliente...
+
+// HEALTH CHECK
+app.get("/healthz", (req, res) => res.json({ ok: true, dbReadyState: mongoose.connection.readyState }));
+
+// ROOT
+app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "admin.html")));
+
+// FALLBACK 404
+app.use("/api", (req, res) => res.status(404).json({ ok: false, msg: "API endpoint not found" }));
 
 /* ======================================================
    START SERVER
 ====================================================== */
-const PORT = Number(process.env.PORT || 4000);
-server.listen(PORT, "0.0.0.0", () => { console.log(`🔥 SERVER RUNNING EN: ${PORT}`); });
+server.listen(PORT, "0.0.0.0", () => console.log(`🔥 SERVER RUNNING EN: ${PORT}`));
 
 /* ======================================================
    GRACEFUL SHUTDOWN
@@ -174,7 +165,8 @@ const gracefulShutdown = async signal => {
     await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
     try { io.emit("server:shutdown"); await new Promise(resolve => io.close(resolve)); } catch {}
     try { await mongoose.disconnect(); } catch {}
-    clearTimeout(force); process.exit(0);
+    clearTimeout(force);
+    process.exit(0);
   } catch (err) { console.error("Error durante shutdown:", err); clearTimeout(force); process.exit(1); }
 };
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
