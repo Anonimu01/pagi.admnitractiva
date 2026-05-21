@@ -13,7 +13,7 @@ const cookieParser = require("cookie-parser");
 const connectDB = require("./config/db");
 
 // MODELOS
-const { User, Wallet, Transaction, Withdraw } = require("./models"); // asegúrate de tenerlos definidos correctamente
+const { User, Wallet, Transaction, Withdraw, Position } = require("./models");
 
 const app = express();
 const server = http.createServer(app);
@@ -59,10 +59,10 @@ app.use(express.static(path.join(__dirname, "public")));
    SOCKET.IO
 ====================================================== */
 const io = new Server(server, {
-  cors: { origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS, methods: ["GET", "POST"], credentials: true }
+  cors: { origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS, methods: ["GET","POST"], credentials: true }
 });
 app.set("io", io);
-app.use((req, res, next) => { req.io = io; next(); });
+app.use((req,res,next) => { req.io = io; next(); });
 
 /* ======================================================
    AUTH HELPERS
@@ -71,7 +71,7 @@ function signAdminToken(payload = {}) {
   return jwt.sign({ admin: true, role: "admin", email: payload.email || ADMIN_EMAIL }, JWT_SECRET, { expiresIn: "8h" });
 }
 
-function getCookie(req, name) {
+function getCookie(req,name) {
   const cookieHeader = req.headers.cookie || "";
   for (const part of cookieHeader.split(";").map(p => p.trim())) {
     const idx = part.indexOf("="); if (idx === -1) continue;
@@ -85,91 +85,91 @@ function getCookie(req, name) {
 function isAdminTokenValid(req) {
   const auth = req.headers.authorization || "";
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
-  const tokenFromCookie = getCookie(req, "admin_token");
+  const tokenFromCookie = getCookie(req,"admin_token");
   const token = bearer || tokenFromCookie;
-  if (!token) return false;
-  try { const decoded = jwt.verify(token, JWT_SECRET); return !!decoded && (decoded.admin === true || decoded.role === "admin"); } catch { return false; }
+  if(!token) return false;
+  try { const decoded = jwt.verify(token,JWT_SECRET); return !!decoded && (decoded.admin===true || decoded.role==="admin"); } catch { return false; }
 }
 
-function ensureAdminAuth(req, res, next) {
+function ensureAdminAuth(req,res,next) {
   try {
-    if (ADMIN_API_KEY) {
-      const key = req.headers["x-admin-api-key"] || req.headers["x-admin-key"] || req.headers["admin-key"] || "";
-      if (key && key === ADMIN_API_KEY) return next();
+    if(ADMIN_API_KEY){
+      const key = req.headers["x-admin-api-key"]||req.headers["x-admin-key"]||req.headers["admin-key"]||"";
+      if(key && key===ADMIN_API_KEY) return next();
     }
-    if (isAdminTokenValid(req)) return next();
-    return res.status(401).json({ ok: false, msg: "No autorizado" });
-  } catch { return res.status(401).json({ ok: false, msg: "No autorizado" }); }
+    if(isAdminTokenValid(req)) return next();
+    return res.status(401).json({ok:false,msg:"No autorizado"});
+  } catch { return res.status(401).json({ok:false,msg:"No autorizado"}); }
 }
 
 /* ======================================================
    ROUTES
 ====================================================== */
 // LOGIN ADMIN
-app.post(["/api/admin/login", "/api/login"], async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
-    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
+app.post(["/api/admin/login","/api/login"], async (req,res)=>{
+  try{
+    const {email,password} = req.body||{};
+    if(!email||!password) return res.status(400).json({ok:false,msg:"Datos incompletos"});
+    if(email!==ADMIN_EMAIL||password!==ADMIN_PASS) return res.status(401).json({ok:false,msg:"Credenciales inválidas"});
 
-    const token = signAdminToken({ email });
-    res.cookie("admin_token", token, { httpOnly: true, sameSite: "lax", secure: false, maxAge: 8*60*60*1000 });
-    return res.json({ ok: true, token, msg: "Login correcto", admin: { email, role: "admin" } });
-  } catch (err) { console.error("admin login error:", err); return res.status(500).json({ ok: false, msg: "Error del servidor" }); }
+    const token = signAdminToken({email});
+    res.cookie("admin_token",token,{httpOnly:true,sameSite:"lax",secure:false,maxAge:8*60*60*1000});
+    return res.json({ok:true,token,msg:"Login correcto",admin:{email,role:"admin"}});
+  }catch(err){console.error("admin login error:",err); return res.status(500).json({ok:false,msg:"Error del servidor"});}
 });
 
-// GET USERS
-app.get("/api/admin/users", ensureAdminAuth, async (req, res) => {
-  try {
-    const users = await User.find({}).select("-password -__v").sort({ createdAt: -1 }).lean();
-    return res.json({ ok: true, users });
-  } catch (err) { console.error("GET users error:", err); return res.status(500).json({ ok: false, msg: "Error al listar usuarios" }); }
+// USERS
+app.get("/api/admin/users",ensureAdminAuth,async(req,res)=>{
+  try{
+    const users = await User.find({}).select("-password -__v").sort({createdAt:-1}).lean();
+    return res.json({ok:true,users});
+  }catch(err){console.error("GET users error:",err); return res.status(500).json({ok:false,msg:"Error al listar usuarios"});}
 });
 
 // TRANSACTIONS
-app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
-  const txs = await Transaction.find({}).sort({ createdAt: -1 }).limit(100).lean();
-  res.json({ ok: true, count: txs.length, transactions: txs });
+app.get("/api/admin/transactions",ensureAdminAuth,async(req,res)=>{
+  try{
+    const txs = await Transaction.find({}).sort({createdAt:-1}).limit(100).lean();
+    return res.json({ok:true,count:txs.length,transactions:txs});
+  }catch(err){console.error("GET transactions error:",err); return res.status(500).json({ok:false,msg:"Error al listar transacciones"});}
 });
 
-// WITHDRAW
-app.post("/api/withdraw/request", async (req, res) => { /* Aquí tu código completo de creación de retiro */ });
-app.get("/api/withdraw/history/:userId", async (req, res) => { /* Historial completo */ });
-app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => { /* Lista admin */ });
-// Y todas las demás rutas combinadas de admin + cliente...
+// PLACEHOLDERS RETIROS (COMPLETA CON TU CÓDIGO REAL)
+app.post("/api/withdraw/request", async(req,res)=>{/* ... */});
+app.get("/api/withdraw/history/:userId", async(req,res)=>{/* ... */});
+app.get("/api/admin/withdraws",ensureAdminAuth,async(req,res)=>{/* ... */});
 
-// HEALTH CHECK
-app.get("/healthz", (req, res) => res.json({ ok: true, dbReadyState: mongoose.connection.readyState }));
+// HEALTH
+app.get("/healthz",(req,res)=>res.json({ok:true,dbReadyState:mongoose.connection.readyState}));
 
 // ROOT
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "admin.html")));
+app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"public","admin.html")));
 
 // FALLBACK 404
-app.use("/api", (req, res) => res.status(404).json({ ok: false, msg: "API endpoint not found" }));
+app.use("/api",(req,res)=>res.status(404).json({ok:false,msg:"API endpoint not found"}));
 
 /* ======================================================
    START SERVER
 ====================================================== */
-server.listen(PORT, "0.0.0.0", () => console.log(`🔥 SERVER RUNNING EN: ${PORT}`));
+server.listen(PORT,"0.0.0.0",()=>console.log(`🔥 SERVER RUNNING EN: ${PORT}`));
 
 /* ======================================================
    GRACEFUL SHUTDOWN
 ====================================================== */
-let shuttingDown = false;
-const gracefulShutdown = async signal => {
-  if (shuttingDown) return;
-  shuttingDown = true;
+let shuttingDown=false;
+const gracefulShutdown=async signal=>{
+  if(shuttingDown) return;
+  shuttingDown=true;
   console.log(`📴 ${signal} recibido. Cerrando servidor...`);
-  const force = setTimeout(() => process.exit(1), 30_000); force.unref();
-  try {
-    await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
-    try { io.emit("server:shutdown"); await new Promise(resolve => io.close(resolve)); } catch {}
-    try { await mongoose.disconnect(); } catch {}
-    clearTimeout(force);
-    process.exit(0);
-  } catch (err) { console.error("Error durante shutdown:", err); clearTimeout(force); process.exit(1); }
+  const force=setTimeout(()=>process.exit(1),30_000); force.unref();
+  try{
+    await new Promise((resolve,reject)=>server.close(err=>err?reject(err):resolve()));
+    try{io.emit("server:shutdown");await new Promise(resolve=>io.close(resolve));}catch{}
+    try{await mongoose.disconnect();}catch{}
+    clearTimeout(force); process.exit(0);
+  }catch(err){console.error("Error durante shutdown:",err); clearTimeout(force);process.exit(1);}
 };
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("unhandledRejection", r => { console.error("UnhandledRejection:", r); gracefulShutdown("unhandledRejection"); });
-process.on("uncaughtException", e => { console.error("UncaughtException:", e); gracefulShutdown("uncaughtException"); });
+process.on("SIGINT",()=>gracefulShutdown("SIGINT"));
+process.on("SIGTERM",()=>gracefulShutdown("SIGTERM"));
+process.on("unhandledRejection",r=>{console.error("UnhandledRejection:",r);gracefulShutdown("unhandledRejection");});
+process.on("uncaughtException",e=>{console.error("UncaughtException:",e);gracefulShutdown("uncaughtException");});
