@@ -2,9 +2,10 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8" />
-<title>Admin — Control Total</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin — Control Total</title>
 
+<script src="/socket.io/socket.io.js"></script>
 <script src="https://s3.tradingview.com/tv.js"></script>
 
 <style>
@@ -19,13 +20,13 @@
   --gold:#d4af37;
   --danger:#b83a3a;
   --success:#24b36b;
+  --info:#4c8bf5;
+  --warning:#d39e00;
   --radius:14px;
   --shadow:0 0 0 1px #1c1c1c;
 }
 
-*{
-  box-sizing:border-box;
-}
+*{ box-sizing:border-box; }
 
 html,body{
   margin:0;
@@ -272,7 +273,7 @@ label{
   font-size:13px;
 }
 
-input,select,button{
+input,select,button,textarea{
   width:100%;
   background:#0f0f0f;
   color:#fff;
@@ -281,6 +282,11 @@ input,select,button{
   border-radius:10px;
   outline:none;
   font-size:14px;
+}
+
+textarea{
+  resize:vertical;
+  min-height:90px;
 }
 
 button{
@@ -309,6 +315,18 @@ button:hover{
   background:var(--success);
   border:none;
   color:#fff;
+}
+
+.info{
+  background:var(--info);
+  border:none;
+  color:#fff;
+}
+
+.warning{
+  background:var(--warning);
+  border:none;
+  color:#000;
 }
 
 .actions{
@@ -344,23 +362,136 @@ button:hover{
   border:1px solid #202020;
 }
 
-.withdraw-item{
+.section-list{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+
+.item{
   background:#141414;
   border:1px solid #242424;
   border-radius:12px;
   padding:14px;
-  margin-bottom:12px;
 }
 
-.withdraw-amount{
-  font-size:18px;
+.item-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:10px;
+}
+
+.item-title{
+  font-size:16px;
   font-weight:900;
-  margin-bottom:12px;
 }
 
-.withdraw-buttons{
+.item-sub{
+  color:#a3a3a3;
+  font-size:12px;
+  margin-top:4px;
+}
+
+.badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:5px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  border:1px solid transparent;
+}
+
+.badge.pending{ background:#2b2408; color:#f3d46b; border-color:#5a4a14; }
+.badge.approved{ background:#0b2a16; color:#5ef0a0; border-color:#1e5c37; }
+.badge.rejected{ background:#2a0b0b; color:#ff8a8a; border-color:#5e1d1d; }
+.badge.counter_offer{ background:#241c0b; color:#f5c96b; border-color:#6c5216; }
+.badge.default{ background:#1b1b1b; color:#ccc; border-color:#333; }
+
+.item-actions{
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+  margin-top:12px;
+}
+
+.item-actions.three{
+  grid-template-columns:repeat(3,1fr);
+}
+
+.detail{
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid #242424;
+}
+
+.msg{
+  background:#0f0f0f;
+  border:1px solid #242424;
+  border-radius:10px;
+  padding:10px 12px;
+  margin-bottom:8px;
+}
+
+.msg.admin{
+  border-color:#5a4a14;
+}
+
+.msg.client{
+  border-color:#234b7c;
+}
+
+.msg-meta{
+  font-size:11px;
+  color:#888;
+  margin-bottom:4px;
+}
+
+.msg-text{
+  font-size:14px;
+  color:#e8e8e8;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+.tabs{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.tab-btn{
+  width:auto;
+  padding:10px 14px;
+  border-radius:999px;
+  background:#151515;
+  color:#ddd;
+  border:1px solid #2a2a2a;
+}
+
+.tab-btn.active{
+  background:var(--gold);
+  color:#000;
+  border-color:transparent;
+}
+
+.tab-panel{
+  display:none;
+}
+
+.tab-panel.active{
+  display:block;
+}
+
+.form-row{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
   gap:10px;
 }
 
@@ -370,9 +501,7 @@ button:hover{
 }
 
 @media (max-width: 980px){
-  body{
-    overflow:auto;
-  }
+  body{ overflow:auto; }
 
   .menu-btn{
     display:inline-flex;
@@ -430,7 +559,9 @@ button:hover{
   }
 
   .actions,
-  .withdraw-buttons{
+  .item-actions,
+  .item-actions.three,
+  .form-row{
     grid-template-columns:1fr;
   }
 
@@ -506,152 +637,251 @@ button:hover{
 </div>
 
 <script>
-/* ================= API AUTO DETECT ================= */
-const API = location.hostname.includes("render.com")
-  ? location.origin + "/api"
-  : "http://localhost:4000/api";
+/* ================= API ================= */
+const API = `${location.origin}/api`;
 
 /* ================= TOKEN ================= */
 const token = localStorage.getItem("admin_token") || localStorage.getItem("token");
 
-if(!token){
+if (!token) {
   location.href = "login.html";
 }
 
-const headers = {
-  "Content-Type": "application/json",
-  ...(token ? { "Authorization": "Bearer " + token } : {})
-};
+function authHeaders(extra = {}) {
+  return {
+    ...(token ? { Authorization: "Bearer " + token } : {}),
+    ...extra
+  };
+}
 
+/* ================= STATE ================= */
 let currentUser = null;
+let currentWithdraw = null;
+let currentDocument = null;
 let tvWidget = null;
 let allUsers = [];
+let allWithdraws = [];
+let allDocuments = [];
+let socket = null;
 
 /* ================= SIDEBAR MOBILE ================= */
-function toggleSidebar(){
+function toggleSidebar() {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("backdrop");
   sidebar.classList.toggle("active");
   backdrop.classList.toggle("active");
 }
 
-function closeSidebar(){
+function closeSidebar() {
   document.getElementById("sidebar").classList.remove("active");
   document.getElementById("backdrop").classList.remove("active");
 }
 
 window.addEventListener("resize", () => {
-  if(window.innerWidth > 980){
+  if (window.innerWidth > 980) {
     closeSidebar();
   }
 });
 
-/* ================= SAFE FETCH ================= */
-async function safeFetch(url, options = {}){
-  try{
+/* ================= HELPERS ================= */
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, function(m) {
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m];
+  });
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
+
+function formatMoney(value) {
+  const n = Number(value || 0);
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
+}
+
+function statusClass(status) {
+  return String(status || "default").toLowerCase().replace(/\s+/g, "_");
+}
+
+function getUserId(u) {
+  return u?._id || u?.id || "";
+}
+
+function getUserEmail(u) {
+  return u?.email || u?.emailAddress || u?.correo || "sin-email";
+}
+
+function getUserName(u) {
+  return u?.nombre || u?.name || u?.fullName || u?.firstName || "";
+}
+
+function getUserPhone(u) {
+  return u?.telefono || u?.phone || u?.mobile || "";
+}
+
+function getUserAddress(u) {
+  return u?.direccion || u?.address || "";
+}
+
+function extractArray(resp) {
+  if (!resp) return [];
+  if (Array.isArray(resp)) return resp;
+  if (Array.isArray(resp.data)) return resp.data;
+  if (Array.isArray(resp.withdraws)) return resp.withdraws;
+  if (Array.isArray(resp.documents)) return resp.documents;
+  if (Array.isArray(resp.users)) return resp.users;
+  if (Array.isArray(resp.result)) return resp.result;
+  return [];
+}
+
+function setTab(tabName) {
+  const tabs = document.querySelectorAll(".tab-btn");
+  const panels = document.querySelectorAll(".tab-panel");
+  tabs.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
+  panels.forEach(p => p.classList.toggle("active", p.id === tabName));
+}
+
+async function apiFetch(url, options = {}) {
+  try {
     const opt = {
       ...options,
-      headers: {
-        ...headers,
-        ...(options.headers || {})
-      }
+      headers: authHeaders(options.headers || {})
     };
+
+    if (options.body instanceof FormData) {
+      delete opt.headers["Content-Type"];
+    } else {
+      opt.headers["Content-Type"] = opt.headers["Content-Type"] || "application/json";
+    }
 
     const res = await fetch(url, opt);
 
-    if(res.status === 401){
+    if (res.status === 401) {
       logout();
       return null;
     }
 
-    if(res.status === 204) return {};
+    if (res.status === 204) return {};
 
     let data;
-    try{
-      data = await res.json();
-    }catch{
-      try{
-        data = await res.text();
-      }catch{
-        data = null;
-      }
+    const ct = res.headers.get("content-type") || "";
+    try {
+      if (ct.includes("application/json")) data = await res.json();
+      else data = await res.text();
+    } catch {
+      data = null;
     }
 
-    if(!res.ok){
-      console.error("API error", res.status, data);
-      document.getElementById("profilePanel").innerHTML = `
-        <div class="error">
-          Error del servidor: ${escapeHtml(data?.msg || data?.message || res.statusText || "Desconocido")}
-        </div>
-      `;
-      return null;
+    if (!res.ok) {
+      throw new Error(
+        typeof data === "string"
+          ? data
+          : (data?.msg || data?.message || res.statusText || "Error")
+      );
     }
 
     return data;
-
-  }catch(e){
-    console.error("Network error:", e);
-    document.getElementById("profilePanel").innerHTML = `
-      <div class="error">Error conectando al servidor</div>
-    `;
-    return null;
+  } catch (e) {
+    console.error("API error:", e);
+    throw e;
   }
 }
 
-/* ================= HELPERS ================= */
-function escapeHtml(s){
-  return String(s || '').replace(/[&<>"']/g, function(m){
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
-  });
+function toast(message) {
+  alert(message);
 }
 
-function extractUsersFromResponse(resp){
-  if(!resp) return [];
-  if(Array.isArray(resp)) return resp;
-  if(Array.isArray(resp.users)) return resp.users;
-  if(Array.isArray(resp.data)) return resp.data;
-  if(Array.isArray(resp.result)) return resp.result;
-  if(resp.ok && Array.isArray(resp.users)) return resp.users;
-  return [];
+/* ================= SOCKETS ================= */
+function connectSocket() {
+  try {
+    socket = io({
+      transports: ["websocket", "polling"],
+      query: { role: "admin" }
+    });
+
+    socket.on("connect", () => {
+      console.log("socket connected", socket.id);
+      if (currentUser) {
+        socket.emit("withdraw:join", { userId: getUserId(currentUser) });
+      }
+    });
+
+    socket.on("admin:new-withdraw", (withdraw) => {
+      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
+        loadWithdraws(getUserId(currentUser), false);
+      }
+      loadAllWithdraws(false);
+    });
+
+    socket.on("admin:withdraw-update", (withdraw) => {
+      if (currentWithdraw && String(currentWithdraw._id) === String(withdraw._id)) {
+        currentWithdraw = withdraw;
+        renderWithdrawDetail(withdraw);
+      }
+      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
+        loadWithdraws(getUserId(currentUser), false);
+      }
+      loadAllWithdraws(false);
+    });
+
+    socket.on("withdraw:update", (withdraw) => {
+      if (currentWithdraw && String(currentWithdraw._id) === String(withdraw._id)) {
+        currentWithdraw = withdraw;
+        renderWithdrawDetail(withdraw);
+      }
+      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
+        loadWithdraws(getUserId(currentUser), false);
+      }
+    });
+
+    socket.on("document:uploaded", (payload) => {
+      if (currentUser && String(payload.userId) === String(getUserId(currentUser))) {
+        loadDocuments(getUserId(currentUser), false);
+      }
+    });
+
+    socket.on("document:approved", (payload) => {
+      if (currentDocument && String(currentDocument._id) === String(payload.id)) {
+        loadDocuments(getUserId(currentUser), false);
+      }
+    });
+
+    socket.on("document:rejected", (payload) => {
+      if (currentDocument && String(currentDocument._id) === String(payload.id)) {
+        loadDocuments(getUserId(currentUser), false);
+      }
+    });
+
+    socket.on("disconnect", () => {
+      console.log("socket disconnected");
+    });
+  } catch (e) {
+    console.warn("socket init failed:", e);
+  }
 }
 
-function getUserId(u){
-  return u?._id || u?.id || "";
-}
-
-function getUserEmail(u){
-  return u?.email || u?.emailAddress || u?.correo || "sin-email";
-}
-
-function getUserName(u){
-  return u?.nombre || u?.name || u?.fullName || "";
-}
-
-function getUserPhone(u){
-  return u?.telefono || u?.phone || u?.mobile || "";
-}
-
-function getUserAddress(u){
-  return u?.direccion || u?.address || "";
-}
-
-/* ================= LOAD USERS ================= */
-async function loadUsers(){
+/* ================= USERS ================= */
+async function loadUsers() {
   const list = document.getElementById("usersList");
   list.innerHTML = `<div class="loader">Cargando...</div>`;
 
-  const resp = await safeFetch(API + "/admin/users", { headers });
-  if(!resp) return;
-
-  allUsers = extractUsersFromResponse(resp);
-  renderUsers(allUsers);
+  try {
+    const resp = await apiFetch(API + "/admin/users");
+    allUsers = extractArray(resp);
+    renderUsers(allUsers);
+  } catch (e) {
+    list.innerHTML = `<div class="error">Error cargando usuarios</div>`;
+  }
 }
 
-function renderUsers(users){
+function renderUsers(users) {
   const list = document.getElementById("usersList");
   list.innerHTML = "";
 
-  if(!users.length){
+  if (!users.length) {
     list.innerHTML = `<div class="center">No hay usuarios</div>`;
     return;
   }
@@ -667,23 +897,23 @@ function renderUsers(users){
       <div class="user-name">${escapeHtml(name || email)}</div>
       <div class="user-email">${escapeHtml(email)}</div>
       <div class="user-meta">
-        <span>Saldo: ${escapeHtml(String(bal))}</span>
+        <span>Saldo: ${escapeHtml(formatMoney(bal))}</span>
         <span>x${escapeHtml(String(typeof u.leverage !== "undefined" ? u.leverage : 1))}</span>
       </div>
     `;
 
     item.onclick = () => {
       openUser(u);
-      if(window.innerWidth <= 980) closeSidebar();
+      if (window.innerWidth <= 980) closeSidebar();
     };
 
     list.appendChild(item);
   });
 }
 
-function filterUsers(text){
+function filterUsers(text) {
   const t = String(text || "").toLowerCase().trim();
-  if(!t){
+  if (!t) {
     renderUsers(allUsers);
     return;
   }
@@ -695,7 +925,8 @@ function filterUsers(text){
       getUserPhone(u),
       getUserAddress(u),
       String(u.balance ?? ""),
-      String(u.leverage ?? "")
+      String(u.leverage ?? ""),
+      String(u.role ?? ""),
     ].join(" ").toLowerCase();
 
     return values.includes(t);
@@ -705,8 +936,10 @@ function filterUsers(text){
 }
 
 /* ================= OPEN USER ================= */
-function openUser(u){
+function openUser(u) {
   currentUser = u;
+  currentWithdraw = null;
+  currentDocument = null;
 
   const userId = getUserId(u);
   const userEmail = getUserEmail(u);
@@ -729,118 +962,178 @@ function openUser(u){
           </div>
 
           <div>
-            <div class="balance-box">$${escapeHtml(String(userBalance))}</div>
+            <div class="balance-box">$${escapeHtml(formatMoney(userBalance))}</div>
             <div class="balance-label">Saldo actual</div>
           </div>
         </div>
       </div>
 
-      <div class="grid">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="tab-profile" onclick="setTab('tab-profile')">Perfil</button>
+        <button class="tab-btn" data-tab="tab-withdraws" onclick="setTab('tab-withdraws')">Retiros</button>
+        <button class="tab-btn" data-tab="tab-documents" onclick="setTab('tab-documents')">Documentos</button>
+      </div>
 
-        <div class="card">
-          <div class="card-title">Información del Cliente</div>
+      <div class="tab-panel active" id="tab-profile">
+        <div class="grid">
+          <div class="card">
+            <div class="card-title">Información del Cliente</div>
 
-          <div class="info-list">
-            <div class="info-row">
-              <span class="info-label">Nombre</span>
-              <span class="info-value">${escapeHtml(userName || "N/A")}</span>
+            <div class="info-list">
+              <div class="info-row">
+                <span class="info-label">Nombre</span>
+                <span class="info-value">${escapeHtml(userName || "N/A")}</span>
+              </div>
+
+              <div class="info-row">
+                <span class="info-label">Correo</span>
+                <span class="info-value">${escapeHtml(userEmail || "N/A")}</span>
+              </div>
+
+              <div class="info-row">
+                <span class="info-label">Teléfono</span>
+                <span class="info-value">${escapeHtml(userPhone || "N/A")}</span>
+              </div>
+
+              <div class="info-row">
+                <span class="info-label">Dirección</span>
+                <span class="info-value">${escapeHtml(userAddress || "N/A")}</span>
+              </div>
+
+              <div class="info-row">
+                <span class="info-label">Estado</span>
+                <span class="info-value">${escapeHtml(userStatus)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Actualizar Saldo</div>
+
+            <div class="form-group">
+              <label for="balance">Nuevo saldo</label>
+              <input id="balance" type="number" step="0.01" value="${escapeHtml(String(userBalance))}" />
             </div>
 
-            <div class="info-row">
-              <span class="info-label">Correo</span>
-              <span class="info-value">${escapeHtml(userEmail || "N/A")}</span>
+            <button class="primary" onclick="updateBalance()">Guardar saldo</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Apalancamiento</div>
+
+            <div class="form-group">
+              <label for="leverage">Escribe una cantidad entre 50 y 100000</label>
+              <input
+                id="leverage"
+                type="number"
+                min="50"
+                max="100000"
+                step="1"
+                value="${escapeHtml(String(userLeverage))}"
+              />
             </div>
 
-            <div class="info-row">
-              <span class="info-label">Teléfono</span>
-              <span class="info-value">${escapeHtml(userPhone || "N/A")}</span>
-            </div>
-
-            <div class="info-row">
-              <span class="info-label">Dirección</span>
-              <span class="info-value">${escapeHtml(userAddress || "N/A")}</span>
-            </div>
-
-            <div class="info-row">
-              <span class="info-label">Estado</span>
-              <span class="info-value">${escapeHtml(userStatus)}</span>
-            </div>
+            <button class="primary" onclick="updateLeverage()">Guardar apalancamiento</button>
           </div>
         </div>
 
+        <div style="height:16px"></div>
+
         <div class="card">
-          <div class="card-title">Actualizar Saldo</div>
+          <div class="card-title">Gráfico</div>
 
           <div class="form-group">
-            <label for="balance">Nuevo saldo</label>
-            <input id="balance" type="number" step="0.01" value="${escapeHtml(String(userBalance))}" />
+            <label for="symbolInput">Símbolo gráfico</label>
+            <input id="symbolInput" value="BINANCE:BTCUSDT" />
           </div>
 
-          <button class="primary" onclick="updateBalance()">Guardar saldo</button>
+          <button class="primary" onclick="loadChart()">Cargar gráfico</button>
+
+          <div style="height:14px"></div>
+          <div id="tv_chart" class="chart-box"></div>
         </div>
+      </div>
+
+      <div class="tab-panel" id="tab-withdraws">
+        <div class="card">
+          <div class="card-title">Retiros del Cliente</div>
+          <div id="withdraws"><div class="loader">Cargando retiros...</div></div>
+        </div>
+
+        <div style="height:16px"></div>
 
         <div class="card">
-          <div class="card-title">Apalancamiento</div>
+          <div class="card-title">Detalle del Retiro</div>
+          <div id="withdrawDetail" class="center">Selecciona un retiro</div>
+        </div>
+      </div>
 
-          <div class="form-group">
-            <label for="leverage">
-              Escribe una cantidad entre 50 y 100000
-            </label>
-            <input
-              id="leverage"
-              type="number"
-              min="50"
-              max="100000"
-              step="1"
-              value="${escapeHtml(String(userLeverage))}"
-            />
+      <div class="tab-panel" id="tab-documents">
+        <div class="card">
+          <div class="card-title">Documentos del Cliente</div>
+          <div id="documents"><div class="loader">Cargando documentos...</div></div>
+        </div>
+
+        <div style="height:16px"></div>
+
+        <div class="card">
+          <div class="card-title">Detalle del Documento</div>
+          <div id="documentDetail" class="center">Selecciona un documento</div>
+        </div>
+
+        <div style="height:16px"></div>
+
+        <div class="card">
+          <div class="card-title">Subir Documento</div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="docType">Tipo</label>
+              <select id="docType">
+                <option value="id">ID / Cédula</option>
+                <option value="passport">Pasaporte</option>
+                <option value="selfie">Selfie</option>
+                <option value="address">Comprobante de domicilio</option>
+                <option value="bank">Estado bancario</option>
+                <option value="other">Otro</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="docFile">Archivo</label>
+              <input id="docFile" type="file" accept=".jpg,.jpeg,.png,.pdf" />
+            </div>
           </div>
 
-          <button class="primary" onclick="updateLeverage()">Guardar apalancamiento</button>
+          <button class="primary" onclick="uploadDocumentForUser()">Subir documento</button>
         </div>
-
       </div>
-
-      <div class="card">
-        <div class="card-title">Gráfico</div>
-
-        <div class="form-group">
-          <label for="symbolInput">Símbolo gráfico</label>
-          <input id="symbolInput" value="BINANCE:BTCUSDT" />
-        </div>
-
-        <button class="primary" onclick="loadChart()">Cargar gráfico</button>
-
-        <div style="height:14px"></div>
-        <div id="tv_chart" class="chart-box"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Retiros pendientes</div>
-        <div id="withdraws">Cargando...</div>
-      </div>
-
     </div>
   `;
 
   loadWithdraws(userId);
+  loadDocuments(userId);
   setTimeout(loadChart, 300);
+
+  if (socket) {
+    socket.emit("withdraw:join", { userId });
+  }
 }
 
 /* ================= TRADINGVIEW ================= */
-function loadChart(){
+function loadChart() {
   const symbolEl = document.getElementById("symbolInput");
-  if(!symbolEl) return;
+  if (!symbolEl) return;
 
   const symbol = symbolEl.value || "BINANCE:BTCUSDT";
 
-  try{
-    if(tvWidget && typeof tvWidget.remove === "function"){
+  try {
+    if (tvWidget && typeof tvWidget.remove === "function") {
       tvWidget.remove();
     }
-  }catch(e){}
+  } catch (e) {}
 
-  try{
+  try {
     tvWidget = new TradingView.widget({
       container_id: "tv_chart",
       symbol,
@@ -854,116 +1147,520 @@ function loadChart(){
       allow_symbol_change: true,
       height: 430
     });
-  }catch(err){
+  } catch (err) {
     console.warn("TradingView init failed:", err);
     const chartBox = document.getElementById("tv_chart");
-    if(chartBox) chartBox.innerHTML = `<div class="center">No se pudo cargar el gráfico</div>`;
+    if (chartBox) chartBox.innerHTML = `<div class="center">No se pudo cargar el gráfico</div>`;
   }
 }
 
 /* ================= UPDATE BALANCE ================= */
-async function updateBalance(){
-  if(!currentUser) return;
+async function updateBalance() {
+  if (!currentUser) return;
 
   const balance = document.getElementById("balance").value;
 
-  const resp = await safeFetch(API + "/admin/update-balance", {
-    method: "POST",
-    body: JSON.stringify({
-      userId: getUserId(currentUser),
-      balance
-    })
-  });
+  try {
+    await apiFetch(API + "/admin/update-balance", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: getUserId(currentUser),
+        balance
+      })
+    });
 
-  if(resp){
     await loadUsers();
-    openUser(currentUser);
+    const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
+    openUser(refreshed);
+    toast("Saldo actualizado");
+  } catch (e) {
+    toast("Error actualizando saldo");
   }
 }
 
 /* ================= UPDATE LEVERAGE ================= */
-async function updateLeverage(){
-  if(!currentUser) return;
+async function updateLeverage() {
+  if (!currentUser) return;
 
   const leverage = Number(document.getElementById("leverage").value);
 
-  if(Number.isNaN(leverage) || leverage < 50 || leverage > 100000){
+  if (Number.isNaN(leverage) || leverage < 50 || leverage > 100000) {
     alert("El apalancamiento debe estar entre 50 y 100000.");
     return;
   }
 
-  const resp = await safeFetch(API + "/admin/update-leverage", {
-    method: "POST",
-    body: JSON.stringify({
-      userId: getUserId(currentUser),
-      leverage
-    })
-  });
+  try {
+    await apiFetch(API + "/admin/update-leverage", {
+      method: "POST",
+      body: JSON.stringify({
+        userId: getUserId(currentUser),
+        leverage
+      })
+    });
 
-  if(resp){
     await loadUsers();
-    openUser(currentUser);
+    const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
+    openUser(refreshed);
+    toast("Apalancamiento actualizado");
+  } catch (e) {
+    toast("Error actualizando apalancamiento");
   }
 }
 
-/* ================= WITHDRAWS ================= */
-async function loadWithdraws(id){
+/* ================= WITHDRAWALS ================= */
+async function loadWithdraws(userId, render = true) {
+  if (!userId) return [];
+
+  try {
+    const data = await apiFetch(API + "/admin/withdraws/" + encodeURIComponent(userId));
+    const list = extractArray(data);
+    allWithdraws = list || [];
+    if (render) renderWithdrawList(allWithdraws);
+    return allWithdraws;
+  } catch (e) {
+    if (render) {
+      const box = document.getElementById("withdraws");
+      if (box) box.innerHTML = `<div class="error">Error cargando retiros</div>`;
+    }
+    return [];
+  }
+}
+
+async function loadAllWithdraws(render = true) {
+  try {
+    const data = await apiFetch(API + "/admin/withdraws");
+    const list = extractArray(data);
+    allWithdraws = list || [];
+    if (render && currentUser) renderWithdrawList(allWithdraws.filter(w => String(w.userId) === String(getUserId(currentUser))));
+    return allWithdraws;
+  } catch (e) {
+    return [];
+  }
+}
+
+function renderWithdrawList(list) {
   const box = document.getElementById("withdraws");
-  box.innerHTML = "Cargando...";
+  if (!box) return;
 
-  const data = await safeFetch(API + "/admin/withdraws/" + encodeURIComponent(id), { headers });
-  if(!data) return;
-
-  const list = Array.isArray(data) ? data : (data.withdraws || data.data || data.result || []);
   box.innerHTML = "";
 
-  if(!Array.isArray(list) || list.length === 0){
+  if (!list || !list.length) {
     box.innerHTML = `<div class="small">Sin solicitudes</div>`;
     return;
   }
 
   list.forEach(w => {
     const div = document.createElement("div");
-    div.className = "withdraw-item";
+    div.className = "item";
+    div.style.cursor = "pointer";
+
+    const badge = escapeHtml(String(w.status || "default"));
+    const method = escapeHtml(w.method || "N/A");
+    const amount = escapeHtml(formatMoney(w.amount || 0));
+    const title = `#${escapeHtml(String(w._id || ""))}`;
+
     div.innerHTML = `
-      <div class="withdraw-amount">
-        Monto: $${escapeHtml(String(w.amount || w.monto || 0))}
+      <div class="item-head">
+        <div>
+          <div class="item-title">$${amount}</div>
+          <div class="item-sub">${title} · Método: ${method} · ${escapeHtml(formatDate(w.createdAt))}</div>
+        </div>
+        <span class="badge ${statusClass(w.status)}">${badge}</span>
       </div>
-      <div class="withdraw-buttons">
-        <button class="success" onclick="approveWithdraw('${w._id || w.id || ""}')">Aprobar</button>
-        <button class="danger" onclick="rejectWithdraw('${w._id || w.id || ""}')">Rechazar</button>
+      <div class="small">
+        Wallet: ${escapeHtml(w.walletAddress || "—")}<br/>
+        Banco: ${escapeHtml(w.bankName || "—")}<br/>
+        Cuenta: ${escapeHtml(w.accountNumber || "—")}
       </div>
     `;
+
+    div.onclick = () => openWithdrawDetail(w);
     box.appendChild(div);
   });
 }
 
-async function approveWithdraw(id){
-  if(!id) return;
-  const resp = await safeFetch(API + "/admin/withdraw/approve", {
-    method: "POST",
-    body: JSON.stringify({ id })
-  });
-  if(resp && currentUser) loadWithdraws(getUserId(currentUser));
+async function openWithdrawDetail(withdraw) {
+  currentWithdraw = withdraw;
+  if (!withdraw) return;
+
+  const box = document.getElementById("withdrawDetail");
+  if (!box) return;
+
+  const msgs = Array.isArray(withdraw.messages) ? withdraw.messages : [];
+  const messagesHtml = msgs.length
+    ? msgs.map(m => `
+        <div class="msg ${escapeHtml(String(m.sender || ""))}">
+          <div class="msg-meta">${escapeHtml(String(m.sender || "—"))} · ${escapeHtml(formatDate(m.createdAt))}</div>
+          <div class="msg-text">${escapeHtml(m.message || "")}</div>
+        </div>
+      `).join("")
+    : `<div class="small">No hay mensajes aún</div>`;
+
+  box.innerHTML = `
+    <div class="item">
+      <div class="item-head">
+        <div>
+          <div class="item-title">$${escapeHtml(formatMoney(withdraw.amount || 0))}</div>
+          <div class="item-sub">
+            ID: ${escapeHtml(withdraw._id || "")}<br/>
+            Usuario: ${escapeHtml(withdraw.userId || "")}<br/>
+            Método: ${escapeHtml(withdraw.method || "—")}<br/>
+            Wallet: ${escapeHtml(withdraw.walletAddress || "—")}<br/>
+            Banco: ${escapeHtml(withdraw.bankName || "—")}<br/>
+            Cuenta: ${escapeHtml(withdraw.accountNumber || "—")}
+          </div>
+        </div>
+        <span class="badge ${statusClass(withdraw.status)}">${escapeHtml(withdraw.status || "default")}</span>
+      </div>
+
+      <div class="detail">
+        <div class="small"><strong>Nota del cliente:</strong> ${escapeHtml(withdraw.note || "—")}</div>
+        <div class="small"><strong>Nota admin:</strong> ${escapeHtml(withdraw.adminNote || "—")}</div>
+        <div class="small"><strong>Monto ofrecido:</strong> $${escapeHtml(formatMoney(withdraw.offerAmount || 0))}</div>
+        <div class="small"><strong>Procesado por:</strong> ${escapeHtml(withdraw.processedBy || "—")}</div>
+        <div class="small"><strong>Procesado at:</strong> ${escapeHtml(formatDate(withdraw.processedAt))}</div>
+      </div>
+
+      <div style="height:12px"></div>
+
+      <div class="card-title" style="margin-bottom:10px;">Mensajes</div>
+      <div>${messagesHtml}</div>
+
+      <div style="height:12px"></div>
+
+      <div class="form-group">
+        <label for="withdrawMessage">Nuevo mensaje admin</label>
+        <textarea id="withdrawMessage" placeholder="Escribe un mensaje para el cliente..."></textarea>
+      </div>
+
+      <div class="actions">
+        <button class="info" onclick="sendWithdrawMessage('${withdraw._id || ""}')">Enviar mensaje</button>
+        <button class="warning" onclick="approveWithdraw('${withdraw._id || ""}')">Aprobar</button>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="counterAmount">Contraoferta</label>
+          <input id="counterAmount" type="number" step="0.01" placeholder="0.00" value="${escapeHtml(String(withdraw.offerAmount || 0))}" />
+        </div>
+        <div class="form-group">
+          <label for="counterNote">Nota de contraoferta</label>
+          <input id="counterNote" type="text" placeholder="Explica la contraoferta..." value="${escapeHtml(withdraw.adminNote || "")}" />
+        </div>
+      </div>
+
+      <div class="actions three">
+        <button class="primary" onclick="sendCounterOffer('${withdraw._id || ""}')">Enviar contraoferta</button>
+        <button class="success" onclick="acceptOfferAsAdmin('${withdraw._id || ""}')">Marcar oferta aceptada</button>
+        <button class="danger" onclick="rejectWithdraw('${withdraw._id || ""}')">Rechazar</button>
+      </div>
+    </div>
+  `;
+
+  if (currentUser) {
+    loadWithdraws(getUserId(currentUser));
+  }
 }
 
-async function rejectWithdraw(id){
-  if(!id) return;
-  const resp = await safeFetch(API + "/admin/withdraw/reject", {
-    method: "POST",
-    body: JSON.stringify({ id })
+async function sendWithdrawMessage(id) {
+  const message = document.getElementById("withdrawMessage")?.value || "";
+  if (!message.trim()) {
+    alert("Escribe un mensaje");
+    return;
+  }
+
+  try {
+    await apiFetch(API + "/admin/withdraw/message", {
+      method: "POST",
+      body: JSON.stringify({ id, message })
+    });
+
+    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+    if (currentWithdraw && String(currentWithdraw._id) === String(id)) {
+      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+      if (refreshed) openWithdrawDetail(refreshed);
+    }
+    toast("Mensaje enviado");
+  } catch (e) {
+    toast("Error enviando mensaje");
+  }
+}
+
+async function sendCounterOffer(id) {
+  const offerAmount = Number(document.getElementById("counterAmount")?.value || 0);
+  const adminNote = document.getElementById("counterNote")?.value || "";
+
+  if (!Number.isFinite(offerAmount) || offerAmount < 0) {
+    alert("Monto inválido");
+    return;
+  }
+
+  try {
+    await apiFetch(API + "/admin/withdraw/counter", {
+      method: "POST",
+      body: JSON.stringify({
+        id,
+        offerAmount,
+        adminNote
+      })
+    });
+
+    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+    if (currentWithdraw && String(currentWithdraw._id) === String(id)) {
+      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+      if (refreshed) openWithdrawDetail(refreshed);
+    }
+    toast("Contraoferta enviada");
+  } catch (e) {
+    toast("Error creando contraoferta");
+  }
+}
+
+async function acceptOfferAsAdmin(id) {
+  try {
+    const w = allWithdraws.find(x => String(x._id) === String(id));
+    if (!w) return;
+
+    const result = await apiFetch(API + "/withdraw/accept-offer", {
+      method: "POST",
+      body: JSON.stringify({ id })
+    });
+
+    if (result) {
+      if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+      if (refreshed) openWithdrawDetail(refreshed);
+      toast("Oferta marcada como aceptada");
+    }
+  } catch (e) {
+    toast("Error aceptando oferta");
+  }
+}
+
+async function approveWithdraw(id) {
+  if (!id) return;
+
+  const adminNote = prompt("Nota de aprobación (opcional):", "") || "";
+
+  try {
+    await apiFetch(API + "/admin/withdraw/approve", {
+      method: "POST",
+      body: JSON.stringify({ id, adminNote })
+    });
+
+    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+    if (refreshed) openWithdrawDetail(refreshed);
+    toast("Retiro aprobado");
+  } catch (e) {
+    toast("Error aprobando retiro");
+  }
+}
+
+async function rejectWithdraw(id) {
+  if (!id) return;
+
+  const adminNote = prompt("Motivo del rechazo (opcional):", "") || "";
+
+  try {
+    await apiFetch(API + "/admin/withdraw/reject", {
+      method: "POST",
+      body: JSON.stringify({ id, adminNote })
+    });
+
+    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+    if (refreshed) openWithdrawDetail(refreshed);
+    toast("Retiro rechazado");
+  } catch (e) {
+    toast("Error rechazando retiro");
+  }
+}
+
+/* ================= DOCUMENTS ================= */
+async function loadDocuments(userId, render = true) {
+  if (!userId) return [];
+
+  try {
+    const data = await apiFetch(API + "/admin/documents/" + encodeURIComponent(userId));
+    const list = extractArray(data);
+    allDocuments = list || [];
+    if (render) renderDocumentList(allDocuments);
+    return allDocuments;
+  } catch (e) {
+    if (render) {
+      const box = document.getElementById("documents");
+      if (box) box.innerHTML = `<div class="error">Error cargando documentos</div>`;
+    }
+    return [];
+  }
+}
+
+function renderDocumentList(list) {
+  const box = document.getElementById("documents");
+  if (!box) return;
+
+  box.innerHTML = "";
+
+  if (!list || !list.length) {
+    box.innerHTML = `<div class="small">Sin documentos</div>`;
+    return;
+  }
+
+  list.forEach(doc => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.style.cursor = "pointer";
+
+    const badge = escapeHtml(String(doc.status || "default"));
+    const type = escapeHtml(doc.type || "N/A");
+    const title = `#${escapeHtml(String(doc._id || ""))}`;
+
+    div.innerHTML = `
+      <div class="item-head">
+        <div>
+          <div class="item-title">${type}</div>
+          <div class="item-sub">${title} · ${escapeHtml(doc.originalName || doc.filename || "archivo")} · ${escapeHtml(formatDate(doc.createdAt))}</div>
+        </div>
+        <span class="badge ${statusClass(doc.status)}">${badge}</span>
+      </div>
+      <div class="small">
+        MIME: ${escapeHtml(doc.mimeType || "—")}<br/>
+        Tamaño: ${escapeHtml(String(Math.round((doc.size || 0) / 1024)))} KB
+      </div>
+    `;
+
+    div.onclick = () => openDocumentDetail(doc);
+    box.appendChild(div);
   });
-  if(resp && currentUser) loadWithdraws(getUserId(currentUser));
+}
+
+function openDocumentDetail(doc) {
+  currentDocument = doc;
+  if (!doc) return;
+
+  const box = document.getElementById("documentDetail");
+  if (!box) return;
+
+  const fileUrl = doc.path || doc.url || "";
+  box.innerHTML = `
+    <div class="item">
+      <div class="item-head">
+        <div>
+          <div class="item-title">${escapeHtml(doc.type || "documento")}</div>
+          <div class="item-sub">
+            ID: ${escapeHtml(doc._id || "")}<br/>
+            Usuario: ${escapeHtml(doc.userId || "")}<br/>
+            Nombre: ${escapeHtml(doc.originalName || doc.filename || "archivo")}<br/>
+            Creado: ${escapeHtml(formatDate(doc.createdAt))}
+          </div>
+        </div>
+        <span class="badge ${statusClass(doc.status)}">${escapeHtml(doc.status || "default")}</span>
+      </div>
+
+      <div class="detail">
+        <div class="small"><strong>Admin note:</strong> ${escapeHtml(doc.adminNote || "—")}</div>
+        <div class="small"><strong>Archivo:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank" style="color:#d4af37;">Abrir archivo</a>` : "—"}</div>
+        <div class="small"><strong>MIME:</strong> ${escapeHtml(doc.mimeType || "—")}</div>
+        <div class="small"><strong>Tamaño:</strong> ${escapeHtml(String(doc.size || 0))} bytes</div>
+      </div>
+
+      <div style="height:12px"></div>
+
+      <div class="form-group">
+        <label for="docAdminNote">Nota admin</label>
+        <textarea id="docAdminNote" placeholder="Escribe una nota sobre el documento...">${escapeHtml(doc.adminNote || "")}</textarea>
+      </div>
+
+      <div class="item-actions">
+        <button class="success" onclick="approveDocument('${doc._id || ""}')">Aprobar</button>
+        <button class="danger" onclick="rejectDocument('${doc._id || ""}')">Rechazar</button>
+      </div>
+    </div>
+  `;
+}
+
+async function approveDocument(id) {
+  const note = document.getElementById("docAdminNote")?.value || "";
+  try {
+    await apiFetch(API + "/admin/document/approve", {
+      method: "POST",
+      body: JSON.stringify({ id, note })
+    });
+
+    if (currentUser) await loadDocuments(getUserId(currentUser), true);
+    const refreshed = allDocuments.find(d => String(d._id) === String(id));
+    if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "approved" });
+    toast("Documento aprobado");
+  } catch (e) {
+    toast("Error aprobando documento");
+  }
+}
+
+async function rejectDocument(id) {
+  const note = document.getElementById("docAdminNote")?.value || "";
+  try {
+    await apiFetch(API + "/admin/document/reject", {
+      method: "POST",
+      body: JSON.stringify({ id, note })
+    });
+
+    if (currentUser) await loadDocuments(getUserId(currentUser), true);
+    const refreshed = allDocuments.find(d => String(d._id) === String(id));
+    if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "rejected" });
+    toast("Documento rechazado");
+  } catch (e) {
+    toast("Error rechazando documento");
+  }
+}
+
+async function uploadDocumentForUser() {
+  if (!currentUser) return alert("Selecciona un usuario primero");
+
+  const file = document.getElementById("docFile")?.files?.[0];
+  const type = document.getElementById("docType")?.value || "other";
+
+  if (!file) {
+    alert("Selecciona un archivo");
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append("userId", getUserId(currentUser));
+  fd.append("type", type);
+  fd.append("document", file);
+
+  try {
+    await apiFetch(API + "/upload-document", {
+      method: "POST",
+      body: fd
+    });
+
+    await loadDocuments(getUserId(currentUser), true);
+    toast("Documento subido");
+  } catch (e) {
+    toast("Error subiendo documento");
+  }
+}
+
+/* ================= LOAD ALL WITH FILTER FOR CURRENT USER ================= */
+async function refreshCurrentData() {
+  if (!currentUser) return;
+  await loadWithdraws(getUserId(currentUser), true);
+  await loadDocuments(getUserId(currentUser), true);
 }
 
 /* ================= LOGOUT ================= */
-function logout(){
+function logout() {
   localStorage.removeItem("admin_token");
   localStorage.removeItem("token");
   location.href = "login.html";
 }
 
 /* ================= INIT ================= */
+connectSocket();
 loadUsers();
 </script>
 
