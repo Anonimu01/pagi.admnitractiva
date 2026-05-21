@@ -23,6 +23,13 @@ const CORE_USERS_ENDPOINTS = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/a
   .map((s) => s.trim())
   .filter(Boolean);
 
+const CORE_WITHDRAW_ENDPOINTS = (process.env.CORE_WITHDRAW_ENDPOINTS || "/api/admin/withdraws,/api/withdraw-requests,/api/withdrawals,/api/admin/withdraw-requests,/api/requests/withdraw")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const WITHDRAW_SYNC_INTERVAL_MS = Number(process.env.WITHDRAW_SYNC_INTERVAL_MS || 180000);
+
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
 const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
 const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
@@ -44,9 +51,7 @@ const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
 const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
 const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
 
-if (!CORE_API_URL) {
-  console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
-}
+if (!CORE_API_URL) console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
 if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
   console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
 }
@@ -58,15 +63,9 @@ Promise.resolve(connectDB()).catch((err) => {
   console.error("Error conectando DB:", err?.message || err);
 });
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ Mongo conectado");
-});
-mongoose.connection.on("error", (err) => {
-  console.error("❌ Mongo connection error:", err);
-});
-mongoose.connection.on("disconnected", () => {
-  console.warn("⚠️ Mongo disconnected");
-});
+mongoose.connection.on("connected", () => console.log("✅ Mongo conectado"));
+mongoose.connection.on("error", (err) => console.error("❌ Mongo connection error:", err));
+mongoose.connection.on("disconnected", () => console.warn("⚠️ Mongo disconnected"));
 
 /* ======================================================
    MODELOS
@@ -80,7 +79,7 @@ const userSchema = new mongoose.Schema(
     fullName: { type: String, default: "" },
     phone: { type: String, default: "" },
     address: { type: String, default: "" },
-    password: { type: String, select: false }, // no se expone al admin
+    password: { type: String, select: false },
     balance: { type: Number, default: 0 },
     leverage: { type: Number, default: 1 },
     currency: { type: String, default: "USD" },
@@ -158,10 +157,23 @@ const positionSchema = new mongoose.Schema(
 
 const withdrawSchema = new mongoose.Schema(
   {
+    sourceId: { type: String, index: true },
     userId: { type: String, index: true },
+    userRef: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+    userEmail: { type: String, default: "" },
+    userName: { type: String, default: "" },
     amount: { type: Number, default: 0 },
+    requestedAmount: { type: Number, default: 0 },
+    counterOfferAmount: { type: Number, default: null },
     status: { type: String, default: "pending", index: true },
     note: { type: String, default: "" },
+    adminNote: { type: String, default: "" },
+    adminAction: { type: String, default: "" },
+    reviewedBy: { type: String, default: "" },
+    reviewedAt: { type: Date, default: null },
+    ipAddress: { type: String, default: "" },
+    userAgent: { type: String, default: "" },
+    reviewHistory: { type: Array, default: [] },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
@@ -178,15 +190,10 @@ const Withdraw = mongoose.models.Withdraw || mongoose.model("Withdraw", withdraw
    MIDDLEWARE
 ====================================================== */
 const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
-
 function parseAllowedOrigins(raw) {
   if (!raw || raw === "*") return "*";
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  return String(raw).split(",").map((s) => s.trim()).filter(Boolean);
 }
-
 const ALLOWED_ORIGINS = parseAllowedOrigins(CLIENT_ORIGIN_RAW);
 
 app.use(
@@ -205,15 +212,7 @@ app.use(
   })
 );
 
-app.use(
-  rateLimit({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
-    max: Number(process.env.RATE_LIMIT_MAX || 200),
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
-
+app.use(rateLimit({ windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000), max: Number(process.env.RATE_LIMIT_MAX || 200), standardHeaders: true, legacyHeaders: false }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -221,18 +220,9 @@ app.use(express.static(path.join(__dirname, "public")));
 /* ======================================================
    SOCKET.IO
 ====================================================== */
-const io = new Server(server, {
-  cors: {
-    origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
+const io = new Server(server, { cors: { origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS, methods: ["GET", "POST"], credentials: true } });
 app.set("io", io);
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
+app.use((req, res, next) => { req.io = io; next(); });
 
 /* ======================================================
    HELPERS
@@ -248,16 +238,8 @@ function getCookie(req, name) {
   }
   return null;
 }
-
-function normalizeNumber(value, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function escapeLike(value) {
-  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
+function normalizeNumber(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+function escapeLike(value) { return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function normalizeNameParts(name = "") {
   const raw = String(name || "").trim().replace(/\s+/g, " ");
   if (!raw) return { firstName: "", lastName: "" };
@@ -265,18 +247,8 @@ function normalizeNameParts(name = "") {
   if (parts.length === 1) return { firstName: "", lastName: parts[0] };
   return { firstName: parts.slice(0, -1).join(" "), lastName: parts.slice(-1)[0] };
 }
-
-function compactSymbol(value) {
-  return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-}
-
-function normalizeSide(value) {
-  const s = String(value || "").trim().toUpperCase();
-  if (["BUY", "LONG", "BULL"].includes(s)) return "BUY";
-  if (["SELL", "SHORT", "BEAR"].includes(s)) return "SELL";
-  return "";
-}
-
+function compactSymbol(value) { return String(value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+function normalizeSide(value) { const s = String(value || "").trim().toUpperCase(); if (["BUY", "LONG", "BULL"].includes(s)) return "BUY"; if (["SELL", "SHORT", "BEAR"].includes(s)) return "SELL"; return ""; }
 function computePositionPnl(position = {}, currentPrice = null) {
   const entry = Number(position.entryPrice ?? position.price ?? position.openPrice ?? 0) || 0;
   const qty = Number(position.qty ?? position.quantity ?? position.amount ?? position.positionSize ?? 0) || 0;
@@ -285,27 +257,13 @@ function computePositionPnl(position = {}, currentPrice = null) {
   const sign = side === "SELL" ? -1 : 1;
   return (px - entry) * qty * sign;
 }
-
 function annotatePosition(position = {}) {
   const entryPrice = Number(position.entryPrice ?? position.price ?? position.openPrice ?? 0) || 0;
   const currentPrice = Number(position.currentPrice ?? entryPrice) || entryPrice;
   const qty = Number(position.qty ?? position.quantity ?? position.amount ?? position.positionSize ?? 0) || 0;
-  const pnl =
-    String(position.status || "").toUpperCase() === "CLOSED"
-      ? Number(position.realizedPnl ?? position.pnl ?? 0) || 0
-      : computePositionPnl({ ...position, entryPrice, qty }, currentPrice);
-
-  return {
-    ...position,
-    entryPrice,
-    currentPrice,
-    qty,
-    pnl,
-    unrealizedPnl: pnl,
-    isOpen: String(position.status || "").toUpperCase() !== "CLOSED",
-  };
+  const pnl = String(position.status || "").toUpperCase() === "CLOSED" ? Number(position.realizedPnl ?? position.pnl ?? 0) || 0 : computePositionPnl({ ...position, entryPrice, qty }, currentPrice);
+  return { ...position, entryPrice, currentPrice, qty, pnl, unrealizedPnl: pnl, isOpen: String(position.status || "").toUpperCase() !== "CLOSED" };
 }
-
 function getEffectiveBalance(userDoc, walletDoc) {
   const walletBalance = Number(walletDoc?.balanceOwn ?? walletDoc?.balance);
   const userBalance = Number(userDoc?.balance ?? 0);
@@ -313,7 +271,6 @@ function getEffectiveBalance(userDoc, walletDoc) {
   if (Number.isFinite(userBalance) && userBalance >= 0) return userBalance;
   return 0;
 }
-
 async function getUserDocFromBearer(req) {
   try {
     const auth = req.headers.authorization || req.headers.Authorization || null;
@@ -321,33 +278,20 @@ async function getUserDocFromBearer(req) {
     const token = String(auth).split(" ")[1];
     if (!token) return null;
     let payload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET);
-    } catch {
-      return null;
-    }
+    try { payload = jwt.verify(token, JWT_SECRET); } catch { return null; }
     const userId = payload && (payload.id || payload.sub || payload.userId || payload._id);
     if (!userId) return null;
     return await User.findById(userId).catch(() => null);
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
-
 function isAdminTokenValid(req) {
   const auth = req.headers.authorization || req.headers.Authorization || "";
   const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
   const tokenFromCookie = getCookie(req, "admin_token");
   const token = bearer || tokenFromCookie;
   if (!token) return false;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return !!decoded && (decoded.admin === true || decoded.role === "admin");
-  } catch {
-    return false;
-  }
+  try { const decoded = jwt.verify(token, JWT_SECRET); return !!decoded && (decoded.admin === true || decoded.role === "admin"); } catch { return false; }
 }
-
 function ensureAdminAuth(req, res, next) {
   try {
     if (ADMIN_API_KEY) {
@@ -356,43 +300,18 @@ function ensureAdminAuth(req, res, next) {
     }
     if (isAdminTokenValid(req)) return next();
     return res.status(401).json({ ok: false, msg: "No autorizado" });
-  } catch {
-    return res.status(401).json({ ok: false, msg: "No autorizado" });
-  }
+  } catch { return res.status(401).json({ ok: false, msg: "No autorizado" }); }
 }
-
-function rewriteSetCookie(cookie) {
-  return String(cookie || "")
-    .replace(/;\s*Domain=[^;]+/gi, "")
-    .replace(/;\s*domain=[^;]+/gi, "");
-}
-
+function rewriteSetCookie(cookie) { return String(cookie || "").replace(/;\s*Domain=[^;]+/gi, "").replace(/;\s*domain=[^;]+/gi, ""); }
 function relaySetCookies(fromHeaders, toRes) {
   const cookies = [];
-  try {
-    if (fromHeaders && typeof fromHeaders.getSetCookie === "function") {
-      const arr = fromHeaders.getSetCookie();
-      if (Array.isArray(arr) && arr.length) cookies.push(...arr);
-    }
-  } catch {}
-  try {
-    const single = fromHeaders?.get?.("set-cookie");
-    if (single) cookies.push(single);
-  } catch {}
+  try { if (fromHeaders && typeof fromHeaders.getSetCookie === "function") { const arr = fromHeaders.getSetCookie(); if (Array.isArray(arr) && arr.length) cookies.push(...arr); } } catch {}
+  try { const single = fromHeaders?.get?.("set-cookie"); if (single) cookies.push(single); } catch {}
   if (cookies.length) toRes.setHeader("set-cookie", cookies.map(rewriteSetCookie));
 }
-
-function buildCoreUrl(endpoint) {
-  const base = CORE_API_URL.replace(/\/+$/, "");
-  const route = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  return `${base}${route}`;
-}
-
+function buildCoreUrl(endpoint) { const base = CORE_API_URL.replace(/\/+$/, ""); const route = endpoint.startsWith("/") ? endpoint : `/${endpoint}`; return `${base}${route}`; }
 async function proxyToCore(req, endpoint, options = {}) {
-  if (!CORE_API_URL || !fetchFn) {
-    return { ok: false, status: 503, data: { ok: false, error: "core_api_not_configured" }, headers: null };
-  }
-
+  if (!CORE_API_URL || !fetchFn) return { ok: false, status: 503, data: { ok: false, error: "core_api_not_configured" }, headers: null };
   try {
     const response = await fetchFn(buildCoreUrl(endpoint), {
       method: options.method || "GET",
@@ -404,33 +323,17 @@ async function proxyToCore(req, endpoint, options = {}) {
         cookie: req.headers.cookie || "",
         ...(options.headers || {}),
       },
-      body:
-        options.body === undefined || options.body === null
-          ? undefined
-          : typeof options.body === "string"
-          ? options.body
-          : JSON.stringify(options.body),
+      body: options.body === undefined || options.body === null ? undefined : typeof options.body === "string" ? options.body : JSON.stringify(options.body),
     });
-
     const text = await response.text();
-    let data = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      data = { ok: false, raw: text };
-    }
-
+    let data = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = { ok: false, raw: text }; }
     return { ok: response.ok, status: response.status, data, headers: response.headers };
   } catch (err) {
     console.error("❌ Proxy error:", err?.message || err);
     return { ok: false, status: 500, data: { ok: false, error: "proxy_error", message: err?.message || String(err) }, headers: null };
   }
 }
-
-function getIo() {
-  return io;
-}
-
+function getIo() { return io; }
 function emitStateUpdates(userId, accountPayload = null, positions = null, transaction = null) {
   try {
     const socket = getIo();
@@ -441,23 +344,11 @@ function emitStateUpdates(userId, accountPayload = null, positions = null, trans
     socket.emit("admin:balance-updated", { userId, account: accountPayload?.account || accountPayload });
     if (transaction) socket.emit("admin:transaction-created", { userId, transaction });
     if (accountPayload?.account?.balance !== undefined) socket.emit(`balance:${userId}`, accountPayload.account.balance);
-  } catch (e) {
-    console.warn("emitStateUpdates error:", e?.message || e);
-  }
+  } catch (e) { console.warn("emitStateUpdates error:", e?.message || e); }
 }
-
 function signAdminToken(payload = {}) {
-  return jwt.sign(
-    {
-      admin: true,
-      role: "admin",
-      email: payload.email || ADMIN_EMAIL || "admin",
-    },
-    JWT_SECRET,
-    { expiresIn: "8h" }
-  );
+  return jwt.sign({ admin: true, role: "admin", email: payload.email || ADMIN_EMAIL || "admin" }, JWT_SECRET, { expiresIn: "8h" });
 }
-
 function normalizeWalletSnapshot(wallet, openPnl = 0) {
   const balanceOwn = Number(wallet?.balanceOwn ?? wallet?.balance ?? 0) || 0;
   const credit = Number(wallet?.credit ?? 0) || 0;
@@ -465,154 +356,42 @@ function normalizeWalletSnapshot(wallet, openPnl = 0) {
   const equity = balanceOwn + openPnl;
   const freeMargin = Math.max(equity + credit - marginUsed, 0);
   const marginLevel = marginUsed > 0 ? (equity / marginUsed) * 100 : 0;
-
-  return {
-    balance: balanceOwn,
-    balanceOwn,
-    credit,
-    equity,
-    marginUsed,
-    freeMargin,
-    marginLevel,
-    leverageFactor: Number(wallet?.leverageFactor ?? 1) || 1,
-    currency: wallet?.currency || "USD",
-    openPnl,
-  };
+  return { balance: balanceOwn, balanceOwn, credit, equity, marginUsed, freeMargin, marginLevel, leverageFactor: Number(wallet?.leverageFactor ?? 1) || 1, currency: wallet?.currency || "USD", openPnl };
 }
-
-async function getWalletForUser(userId) {
-  return await Wallet.findOne({ user: userId }).lean().exec().catch(() => null);
-}
-
+async function getWalletForUser(userId) { return await Wallet.findOne({ user: userId }).lean().exec().catch(() => null); }
 async function getWalletDocForUser(userId) {
   let wallet = await Wallet.findOne({ user: userId }).catch(() => null);
-  if (!wallet) {
-    wallet = new Wallet({
-      user: userId,
-      balanceOwn: 0,
-      balance: 0,
-      credit: 0,
-      marginUsed: 0,
-      leverageFactor: 1,
-      equity: 0,
-      freeMargin: 0,
-      marginLevel: 0,
-      currency: "USD",
-    });
-  }
+  if (!wallet) wallet = new Wallet({ user: userId, balanceOwn: 0, balance: 0, credit: 0, marginUsed: 0, leverageFactor: 1, equity: 0, freeMargin: 0, marginLevel: 0, currency: "USD" });
   return wallet;
 }
-
-async function getPositionsForUser(userId) {
-  return await Position.find({ user: userId }).sort({ createdAt: -1 }).lean().exec().catch(() => []);
-}
-
-async function loadTransactionsForUser(userId, limit = 50) {
-  return await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-}
-
-async function loadWithdrawsForUser(userId, status = "pending") {
-  const query = { userId: String(userId) };
-  if (status) query.status = status;
-  return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []);
-}
-
-async function recordTransaction({
-  user,
-  type,
-  amount = 0,
-  status = "completed",
-  note = "",
-  balanceBefore = 0,
-  balanceAfter = 0,
-  meta = {},
-  source = "admin-server.js",
-}) {
+async function getPositionsForUser(userId) { return await Position.find({ user: userId }).sort({ createdAt: -1 }).lean().exec().catch(() => []); }
+async function loadTransactionsForUser(userId, limit = 50) { return await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []); }
+async function loadWithdrawsForUser(userId, status = "pending") { const query = { userId: String(userId) }; if (status) query.status = status; return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []); }
+async function recordTransaction({ user, type, amount = 0, status = "completed", note = "", balanceBefore = 0, balanceAfter = 0, meta = {}, source = "admin-server.js" }) {
   try {
-    const payload = {
-      user: user?._id || null,
-      userId: String(user?._id || ""),
-      type,
-      amount: Number(amount) || 0,
-      status,
-      note,
-      balanceBefore: Number(balanceBefore) || 0,
-      balanceAfter: Number(balanceAfter) || 0,
-      meta,
-      source,
-      createdAt: new Date(),
-    };
+    const payload = { user: user?._id || null, userId: String(user?._id || ""), type, amount: Number(amount) || 0, status, note, balanceBefore: Number(balanceBefore) || 0, balanceAfter: Number(balanceAfter) || 0, meta, source, createdAt: new Date() };
     const tx = await Transaction.create(payload);
     return tx.toObject ? tx.toObject() : tx;
   } catch (err) {
     console.warn("recordTransaction fallback:", err?.message || err);
-    return {
-      userId: String(user?._id || ""),
-      type,
-      amount: Number(amount) || 0,
-      status,
-      note,
-      balanceBefore: Number(balanceBefore) || 0,
-      balanceAfter: Number(balanceAfter) || 0,
-      meta,
-      source,
-      createdAt: new Date().toISOString(),
-    };
+    return { userId: String(user?._id || ""), type, amount: Number(amount) || 0, status, note, balanceBefore: Number(balanceBefore) || 0, balanceAfter: Number(balanceAfter) || 0, meta, source, createdAt: new Date().toISOString() };
   }
 }
-
 async function buildAccountForUser(userDoc) {
   const wallet = await getWalletForUser(userDoc._id);
   const positions = await getPositionsForUser(userDoc._id);
   const recentTransactions = await loadTransactionsForUser(userDoc._id, 20);
-
   const walletSnapshot = wallet?.toObject ? wallet.toObject() : wallet;
   const balance = getEffectiveBalance(userDoc, walletSnapshot);
   const openPnl = (positions || []).reduce((sum, p) => sum + (Number(p.pnl ?? 0) || 0), 0);
-
-  const normalizedWallet = normalizeWalletSnapshot(
-    walletSnapshot ? { ...walletSnapshot, balanceOwn: balance, balance } : { balanceOwn: balance, balance },
-    openPnl
-  );
-
-  return {
-    account: {
-      ...normalizedWallet,
-      balance,
-      balanceOwn: balance,
-      equity: balance,
-      leverage: Number(userDoc.leverage ?? walletSnapshot?.leverageFactor ?? 100) || 100,
-      currency: userDoc.currency || walletSnapshot?.currency || "USD",
-      positions: positions || [],
-      openPositions: positions || [],
-      recentTransactions,
-      transactions: recentTransactions,
-      openPnl,
-    },
-    user: userDoc.toObject ? userDoc.toObject() : userDoc,
-    wallet: walletSnapshot,
-    positions,
-    transactions: recentTransactions,
-  };
+  const normalizedWallet = normalizeWalletSnapshot(walletSnapshot ? { ...walletSnapshot, balanceOwn: balance, balance } : { balanceOwn: balance, balance }, openPnl);
+  return { account: { ...normalizedWallet, balance, balanceOwn: balance, equity: balance, leverage: Number(userDoc.leverage ?? walletSnapshot?.leverageFactor ?? 100) || 100, currency: userDoc.currency || walletSnapshot?.currency || "USD", positions: positions || [], openPositions: positions || [], recentTransactions, transactions: recentTransactions, openPnl }, user: userDoc.toObject ? userDoc.toObject() : userDoc, wallet: walletSnapshot, positions, transactions: recentTransactions };
 }
-
 async function getTargetUserForAdmin(req, res) {
   const userId = req.params?.userId || req.query?.userId || req.body?.userId || null;
-
-  if (userId) {
-    const user = await User.findById(userId).catch(() => null);
-    if (!user) {
-      res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
-      return null;
-    }
-    return user;
-  }
-
-  const bearerUser = await getUserDocFromBearer(req);
-  if (bearerUser) return bearerUser;
-
-  res.status(401).json({ ok: false, msg: "No autorizado" });
-  return null;
+  if (userId) { const user = await User.findById(userId).catch(() => null); if (!user) { res.status(404).json({ ok: false, msg: "Usuario no encontrado" }); return null; } return user; }
+  const bearerUser = await getUserDocFromBearer(req); if (bearerUser) return bearerUser;
+  res.status(401).json({ ok: false, msg: "No autorizado" }); return null;
 }
 
 /* ======================================================
@@ -622,63 +401,24 @@ let zohoAccessTokenCache = null;
 let zohoAccessTokenExpiresAt = 0;
 let zohoSyncLock = false;
 const zohoQueue = new Set();
-
-function zohoReady() {
-  return !!(ZOHO_ENABLED && ZOHO_CLIENT_ID && ZOHO_CLIENT_SECRET && ZOHO_REFRESH_TOKEN);
-}
-
+function zohoReady() { return !!(ZOHO_ENABLED && ZOHO_CLIENT_ID && ZOHO_CLIENT_SECRET && ZOHO_REFRESH_TOKEN); }
 async function getZohoAccessToken() {
   if (!zohoReady()) return null;
-
   const now = Date.now();
-  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30_000) {
-    return zohoAccessTokenCache;
-  }
-
-  const url =
-    `${ZOHO_ACCOUNTS_URL}/oauth/v2/token` +
-    `?refresh_token=${encodeURIComponent(ZOHO_REFRESH_TOKEN)}` +
-    `&client_id=${encodeURIComponent(ZOHO_CLIENT_ID)}` +
-    `&client_secret=${encodeURIComponent(ZOHO_CLIENT_SECRET)}` +
-    `&grant_type=refresh_token`;
-
+  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30_000) return zohoAccessTokenCache;
+  const url = `${ZOHO_ACCOUNTS_URL}/oauth/v2/token?refresh_token=${encodeURIComponent(ZOHO_REFRESH_TOKEN)}&client_id=${encodeURIComponent(ZOHO_CLIENT_ID)}&client_secret=${encodeURIComponent(ZOHO_CLIENT_SECRET)}&grant_type=refresh_token`;
   const response = await fetchFn(url, { method: "POST" });
   const data = await response.json().catch(() => ({}));
-
-  if (!response.ok || !data?.access_token) {
-    throw new Error(`Zoho token error: ${data?.error || data?.error_description || response.statusText}`);
-  }
-
+  if (!response.ok || !data?.access_token) throw new Error(`Zoho token error: ${data?.error || data?.error_description || response.statusText}`);
   zohoAccessTokenCache = data.access_token;
   const expiresInSec = Number(data.expires_in || 3600);
   zohoAccessTokenExpiresAt = Date.now() + expiresInSec * 1000;
   return zohoAccessTokenCache;
 }
-
 async function zohoRequest(pathname, options = {}) {
-  const token = await getZohoAccessToken();
-  if (!token) {
-    throw new Error("Zoho no configurado");
-  }
-
-  const res = await fetchFn(`${ZOHO_API_BASE_URL}/crm/v8${pathname}`, {
-    method: options.method || "GET",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-
+  const token = await getZohoAccessToken(); if (!token) throw new Error("Zoho no configurado");
+  const res = await fetchFn(`${ZOHO_API_BASE_URL}/crm/v8${pathname}`, { method: options.method || "GET", headers: { Authorization: `Zoho-oauthtoken ${token}`, "Content-Type": "application/json", ...(options.headers || {}) }, body: options.body ? JSON.stringify(options.body) : undefined });
+  const text = await res.text(); let data = {}; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -693,46 +433,15 @@ function normalizeCoreUser(raw = {}) {
   const balance = normalizeNumber(raw.balance, 0);
   const leverage = normalizeNumber(raw.leverage, 1);
   const sourceId = String(raw.id || raw._id || raw.userId || raw.sourceId || "").trim();
-
-  return {
-    sourceId,
-    email,
-    firstName,
-    lastName,
-    fullName: fullName || [firstName, lastName].filter(Boolean).join(" ").trim() || email,
-    phone,
-    address,
-    balance,
-    leverage,
-    currency: String(raw.currency || "USD").toUpperCase(),
-    source: String(raw.source || raw.origin || "core"),
-    raw,
-  };
+  return { sourceId, email, firstName, lastName, fullName: fullName || [firstName, lastName].filter(Boolean).join(" ").trim() || email, phone, address, registrationIp: String(raw.registrationIp || raw.ipAddress || raw.ip || raw.registerIp || "").trim(), lastLoginIp: String(raw.lastLoginIp || raw.loginIp || "").trim(), registrationUserAgent: String(raw.registrationUserAgent || raw.userAgent || raw.ua || "").trim(), balance, leverage, currency: String(raw.currency || "USD").toUpperCase(), source: String(raw.source || raw.origin || "core"), raw };
 }
-
 async function upsertLocalUserFromCore(rawUser) {
   const u = normalizeCoreUser(rawUser);
   if (!u.email && !u.sourceId) return null;
-
   const query = u.email ? { email: u.email } : { sourceId: u.sourceId };
   let doc = await User.findOne(query).catch(() => null);
-
   if (!doc) {
-    doc = new User({
-      sourceId: u.sourceId || undefined,
-      email: u.email || undefined,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      fullName: u.fullName,
-      phone: u.phone,
-      address: u.address,
-      balance: u.balance,
-      leverage: u.leverage,
-      currency: u.currency,
-      source: u.source,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+    doc = new User({ sourceId: u.sourceId || undefined, email: u.email || undefined, firstName: u.firstName, lastName: u.lastName, fullName: u.fullName, phone: u.phone, address: u.address, registrationIp: u.registrationIp, lastLoginIp: u.lastLoginIp, registrationUserAgent: u.registrationUserAgent, balance: u.balance, leverage: u.leverage, currency: u.currency, source: u.source, createdAt: new Date(), updatedAt: new Date() });
   } else {
     if (u.sourceId) doc.sourceId = u.sourceId;
     if (u.email) doc.email = u.email;
@@ -741,37 +450,106 @@ async function upsertLocalUserFromCore(rawUser) {
     doc.fullName = u.fullName || doc.fullName || "";
     doc.phone = u.phone || doc.phone || "";
     doc.address = u.address || doc.address || "";
+    if (u.registrationIp) doc.registrationIp = u.registrationIp;
+    if (u.lastLoginIp) doc.lastLoginIp = u.lastLoginIp;
+    if (u.registrationUserAgent) doc.registrationUserAgent = u.registrationUserAgent;
     if (Number.isFinite(u.balance)) doc.balance = u.balance;
     if (Number.isFinite(u.leverage)) doc.leverage = u.leverage;
     doc.currency = u.currency || doc.currency || "USD";
     doc.source = u.source || doc.source || "core";
     doc.updatedAt = new Date();
   }
+  await doc.save(); return doc;
+}
 
-  await doc.save();
-  return doc;
+function normalizeCoreWithdraw(raw = {}) {
+  const amount = normalizeNumber(raw.amount ?? raw.requestedAmount ?? raw.withdrawAmount ?? 0, 0);
+  return { sourceId: String(raw.id || raw._id || raw.sourceId || raw.withdrawId || "").trim(), userId: String(raw.userId || raw.user || raw.clientId || "").trim(), userEmail: String(raw.email || raw.userEmail || raw.correo || "").trim().toLowerCase(), userName: String(raw.fullName || raw.name || raw.nombre || "").trim(), amount, requestedAmount: amount, counterOfferAmount: raw.counterOfferAmount !== undefined && raw.counterOfferAmount !== null && raw.counterOfferAmount !== "" ? normalizeNumber(raw.counterOfferAmount, null) : null, status: String(raw.status || "pending").trim().toLowerCase(), note: String(raw.note || raw.message || "").trim(), adminNote: String(raw.adminNote || "").trim(), adminAction: String(raw.adminAction || "").trim(), reviewedBy: String(raw.reviewedBy || "").trim(), reviewedAt: raw.reviewedAt ? new Date(raw.reviewedAt) : null, ipAddress: String(raw.ipAddress || raw.ip || raw.registrationIp || "").trim(), userAgent: String(raw.userAgent || raw.ua || "").trim(), createdAt: raw.createdAt ? new Date(raw.createdAt) : new Date(), updatedAt: raw.updatedAt ? new Date(raw.updatedAt) : new Date(), raw };
+}
+async function upsertLocalWithdrawFromCore(raw) {
+  const w = normalizeCoreWithdraw(raw);
+  if (!w.sourceId && !w.userId) return null;
+  const query = w.sourceId ? { sourceId: w.sourceId } : { userId: w.userId, amount: w.amount, createdAt: w.createdAt };
+  let doc = await Withdraw.findOne(query).catch(() => null);
+  if (!doc) {
+    doc = new Withdraw({ sourceId: w.sourceId || undefined, userId: w.userId, userEmail: w.userEmail, userName: w.userName, amount: w.amount, requestedAmount: w.requestedAmount, counterOfferAmount: w.counterOfferAmount, status: w.status || "pending", note: w.note, adminNote: w.adminNote, adminAction: w.adminAction, reviewedBy: w.reviewedBy, reviewedAt: w.reviewedAt, ipAddress: w.ipAddress, userAgent: w.userAgent, reviewHistory: Array.isArray(w.raw?.reviewHistory) ? w.raw.reviewHistory : [], createdAt: w.createdAt, updatedAt: w.updatedAt });
+  } else {
+    if (w.sourceId) doc.sourceId = w.sourceId;
+    if (w.userId) doc.userId = w.userId;
+    if (w.userEmail) doc.userEmail = w.userEmail;
+    if (w.userName) doc.userName = w.userName;
+    if (Number.isFinite(w.amount)) doc.amount = w.amount;
+    if (Number.isFinite(w.requestedAmount)) doc.requestedAmount = w.requestedAmount;
+    if (w.counterOfferAmount !== null) doc.counterOfferAmount = w.counterOfferAmount;
+    if (w.status) doc.status = w.status;
+    if (w.note) doc.note = w.note;
+    if (w.adminNote) doc.adminNote = w.adminNote;
+    if (w.adminAction) doc.adminAction = w.adminAction;
+    if (w.reviewedBy) doc.reviewedBy = w.reviewedBy;
+    if (w.reviewedAt) doc.reviewedAt = w.reviewedAt;
+    if (w.ipAddress) doc.ipAddress = w.ipAddress;
+    if (w.userAgent) doc.userAgent = w.userAgent;
+    if (Array.isArray(w.raw?.reviewHistory)) doc.reviewHistory = w.raw.reviewHistory;
+    doc.updatedAt = new Date();
+  }
+  await doc.save(); return doc;
+}
+async function fetchCoreWithdrawsOnce() {
+  if (!CORE_API_URL || !fetchFn) return [];
+  for (const endpoint of CORE_WITHDRAW_ENDPOINTS) {
+    try {
+      const response = await fetchFn(buildCoreUrl(endpoint), { method: "GET", headers: { "Content-Type": "application/json", "x-admin-api-key": ADMIN_API_KEY, "x-admin-key": ADMIN_API_KEY, authorization: `Bearer ${JWT_SECRET}` } });
+      if (!response.ok) continue;
+      const data = await response.json().catch(() => null);
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.withdraws) ? data.withdraws : Array.isArray(data?.data) ? data.data : Array.isArray(data?.result) ? data.result : [];
+      if (arr.length) return arr;
+    } catch (err) { console.warn(`fetchCoreWithdrawsOnce fail ${endpoint}:`, err?.message || err); }
+  }
+  return [];
+}
+async function syncCoreWithdrawsToLocal() {
+  const rows = await fetchCoreWithdrawsOnce();
+  if (!Array.isArray(rows) || rows.length === 0) return { ok: true, synced: 0, created: 0, updated: 0 };
+  let created = 0; let updated = 0;
+  for (const raw of rows) {
+    const before = await Withdraw.findOne(raw?.id || raw?._id || raw?.sourceId ? { sourceId: String(raw.id || raw._id || raw.sourceId) } : raw?.userId ? { userId: String(raw.userId), amount: normalizeNumber(raw.amount || raw.requestedAmount || 0) } : null).catch(() => null);
+    const doc = await upsertLocalWithdrawFromCore(raw);
+    if (!doc) continue;
+    if (!before) created += 1; else updated += 1;
+  }
+  return { ok: true, synced: rows.length, created, updated };
+}
+async function reviewWithdrawRequest({ id, action, amount = null, note = "", reviewedBy = "" }) {
+  const w = await Withdraw.findById(id).catch(() => null);
+  if (!w) return { ok: false, status: 404, msg: "Solicitud no encontrada" };
+  const history = Array.isArray(w.reviewHistory) ? w.reviewHistory : [];
+  history.push({ action, amount, note, reviewedBy, at: new Date().toISOString() });
+  w.reviewHistory = history; w.adminNote = note || w.adminNote || ""; w.reviewedBy = reviewedBy || w.reviewedBy || ""; w.reviewedAt = new Date(); w.updatedAt = new Date();
+  if (action === "approve") { w.status = "approved"; if (amount !== null && amount !== "") w.amount = normalizeNumber(amount, w.amount || 0); }
+  else if (action === "reject") { w.status = "rejected"; }
+  else if (action === "counteroffer") { w.status = "countered"; w.counterOfferAmount = normalizeNumber(amount, w.counterOfferAmount || 0); }
+  else if (action === "update") { w.status = "updated"; if (amount !== null && amount !== "") w.amount = normalizeNumber(amount, w.amount || 0); }
+  else return { ok: false, status: 400, msg: "Acción inválida" };
+  await w.save();
+  io.emit("admin:withdraw-response", { userId: w.userId, id: w.id, status: w.status, action, amount: w.amount, counterOfferAmount: w.counterOfferAmount, note: w.adminNote });
+  io.emit(`withdraw:${w.userId}`, { id: w.id, status: w.status, action, amount: w.amount, counterOfferAmount: w.counterOfferAmount, note: w.adminNote });
+  return { ok: true, withdraw: w.toObject ? w.toObject() : w };
 }
 
 async function getExistingZohoIdForUser(userDoc) {
   if (userDoc?.zohoLeadId) return { module: "Leads", id: userDoc.zohoLeadId };
   if (userDoc?.zohoContactId) return { module: "Contacts", id: userDoc.zohoContactId };
-
   if (userDoc?.email) {
     try {
       const crit = encodeURIComponent(`(${ZOHO_EMAIL_FIELD}:equals:${userDoc.email})`);
       const leadSearch = await zohoRequest(`/Leads/search?criteria=${crit}`);
-      const leadId = leadSearch?.data?.data?.[0]?.id;
-      if (leadId) return { module: "Leads", id: leadId };
-
+      const leadId = leadSearch?.data?.data?.[0]?.id; if (leadId) return { module: "Leads", id: leadId };
       const contactSearch = await zohoRequest(`/Contacts/search?criteria=${crit}`);
-      const contactId = contactSearch?.data?.data?.[0]?.id;
-      if (contactId) return { module: "Contacts", id: contactId };
+      const contactId = contactSearch?.data?.data?.[0]?.id; if (contactId) return { module: "Contacts", id: contactId };
     } catch {}
   }
-
   return null;
 }
-
 function buildZohoPayload(userDoc) {
   const fullName = String(userDoc.fullName || [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") || userDoc.email || "Cliente").trim();
   const firstName = String(userDoc.firstName || "").trim();
@@ -779,418 +557,118 @@ function buildZohoPayload(userDoc) {
   const address = String(userDoc.address || "").trim();
   const phone = String(userDoc.phone || "").trim();
   const email = String(userDoc.email || "").trim().toLowerCase();
-
-  return {
-    [ZOHO_FIRST_NAME_FIELD]: firstName || "Cliente",
-    [ZOHO_LAST_NAME_FIELD]: lastName || fullName || "Cliente",
-    [ZOHO_EMAIL_FIELD]: email || undefined,
-    [ZOHO_PHONE_FIELD]: phone || undefined,
-    [ZOHO_ADDRESS_FIELD]: address || undefined,
-    [ZOHO_COMPANY_FIELD]: "Leones Broker",
-    Description: `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.`,
-  };
+  return { [ZOHO_FIRST_NAME_FIELD]: firstName || "Cliente", [ZOHO_LAST_NAME_FIELD]: lastName || fullName || "Cliente", [ZOHO_EMAIL_FIELD]: email || undefined, [ZOHO_PHONE_FIELD]: phone || undefined, [ZOHO_ADDRESS_FIELD]: address || undefined, [ZOHO_COMPANY_FIELD]: "Leones Broker", Description: `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.` };
 }
-
 async function createOrUpdateZohoRecord(userDoc) {
-  if (!zohoReady()) {
-    return { ok: false, skipped: true, reason: "zoho_not_configured" };
-  }
-
-  const payload = buildZohoPayload(userDoc);
-  const existing = await getExistingZohoIdForUser(userDoc);
-
+  if (!zohoReady()) return { ok: false, skipped: true, reason: "zoho_not_configured" };
+  const payload = buildZohoPayload(userDoc); const existing = await getExistingZohoIdForUser(userDoc);
   if (existing?.id) {
-    const update = await zohoRequest(`/${existing.module}/${existing.id}`, {
-      method: "PUT",
-      body: { data: [payload] },
-    });
+    const update = await zohoRequest(`/${existing.module}/${existing.id}`, { method: "PUT", body: { data: [payload] } });
     if (update.ok) return { ok: true, action: "updated", module: existing.module, data: update.data };
   }
-
   let moduleToUse = ZOHO_MODULE || "Leads";
-  let create = await zohoRequest(`/${moduleToUse}`, {
-    method: "POST",
-    body: { data: [payload] },
-  });
-
-  if (!create.ok && moduleToUse !== ZOHO_FALLBACK_MODULE) {
-    moduleToUse = ZOHO_FALLBACK_MODULE;
-    create = await zohoRequest(`/${moduleToUse}`, {
-      method: "POST",
-      body: { data: [payload] },
-    });
-  }
-
-  if (!create.ok) {
-    throw new Error(JSON.stringify(create.data || { msg: "Zoho create failed" }));
-  }
-
-  const record = create.data?.data?.[0];
-  const zohoId = record?.details?.id || record?.id || "";
+  let create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } });
+  if (!create.ok && moduleToUse !== ZOHO_FALLBACK_MODULE) { moduleToUse = ZOHO_FALLBACK_MODULE; create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } }); }
+  if (!create.ok) throw new Error(JSON.stringify(create.data || { msg: "Zoho create failed" }));
+  const record = create.data?.data?.[0]; const zohoId = record?.details?.id || record?.id || "";
   return { ok: true, action: "created", module: moduleToUse, zohoId, data: create.data };
 }
-
 async function syncUserToZohoAndMark(userDoc) {
   if (!userDoc) return null;
-
   try {
     const zoho = await createOrUpdateZohoRecord(userDoc);
-
     if (zoho?.ok) {
       userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
       if (zoho.module === "Leads" && zoho.zohoId) userDoc.zohoLeadId = zoho.zohoId;
       if (zoho.module === "Contacts" && zoho.zohoId) userDoc.zohoContactId = zoho.zohoId;
-      userDoc.zohoSyncStatus = "synced";
-      userDoc.zohoLastError = "";
-      userDoc.zohoSyncedAt = new Date();
-      userDoc.updatedAt = new Date();
-      await userDoc.save().catch(() => null);
-      return zoho;
+      userDoc.zohoSyncStatus = "synced"; userDoc.zohoLastError = ""; userDoc.zohoSyncedAt = new Date(); userDoc.updatedAt = new Date(); await userDoc.save().catch(() => null); return zoho;
     }
-
     return zoho;
   } catch (err) {
-    userDoc.zohoSyncStatus = "error";
-    userDoc.zohoLastError = err?.message || String(err);
-    userDoc.zohoSyncedAt = new Date();
-    userDoc.updatedAt = new Date();
-    await userDoc.save().catch(() => null);
-    return { ok: false, error: err?.message || String(err) };
+    userDoc.zohoSyncStatus = "error"; userDoc.zohoLastError = err?.message || String(err); userDoc.zohoSyncedAt = new Date(); userDoc.updatedAt = new Date(); await userDoc.save().catch(() => null); return { ok: false, error: err?.message || String(err) };
   }
 }
-
 async function fetchCoreUsersOnce() {
   if (!CORE_API_URL || !fetchFn) return [];
-
   for (const endpoint of CORE_USERS_ENDPOINTS) {
     try {
-      const response = await fetchFn(buildCoreUrl(endpoint), {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-api-key": ADMIN_API_KEY,
-          "x-admin-key": ADMIN_API_KEY,
-          authorization: `Bearer ${JWT_SECRET}`,
-        },
-      });
-
+      const response = await fetchFn(buildCoreUrl(endpoint), { method: "GET", headers: { "Content-Type": "application/json", "x-admin-api-key": ADMIN_API_KEY, "x-admin-key": ADMIN_API_KEY, authorization: `Bearer ${JWT_SECRET}` } });
       if (!response.ok) continue;
-
       const data = await response.json().catch(() => null);
-      const arr = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.users)
-        ? data.users
-        : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.result)
-        ? data.result
-        : [];
-
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.users) ? data.users : Array.isArray(data?.data) ? data.data : Array.isArray(data?.result) ? data.result : [];
       if (arr.length) return arr;
-    } catch (err) {
-      console.warn(`fetchCoreUsersOnce fail ${endpoint}:`, err?.message || err);
-    }
+    } catch (err) { console.warn(`fetchCoreUsersOnce fail ${endpoint}:`, err?.message || err); }
   }
-
   return [];
 }
-
 async function syncCoreUsersToLocalAndZoho() {
   if (zohoSyncLock) return { ok: false, skipped: true, reason: "sync_locked" };
   zohoSyncLock = true;
-
   try {
     const coreUsers = await fetchCoreUsersOnce();
-    if (!Array.isArray(coreUsers) || coreUsers.length === 0) {
-      return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
-    }
-
-    let created = 0;
-    let updated = 0;
-    let zohoCount = 0;
-    const errors = [];
-
+    if (!Array.isArray(coreUsers) || coreUsers.length === 0) return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
+    let created = 0; let updated = 0; let zohoCount = 0; const errors = [];
     for (const raw of coreUsers) {
-      const before = await User.findOne(
-        raw?.email ? { email: String(raw.email).trim().toLowerCase() } : raw?.id || raw?._id ? { sourceId: String(raw.id || raw._id) } : null
-      ).catch(() => null);
-
-      const doc = await upsertLocalUserFromCore(raw);
-      if (!doc) continue;
-      if (!before) created += 1;
-      else updated += 1;
-
-      const z = await syncUserToZohoAndMark(doc);
-      if (z?.ok) zohoCount += 1;
-      if (z?.error) errors.push({ email: doc.email, error: z.error });
+      const before = await User.findOne(raw?.email ? { email: String(raw.email).trim().toLowerCase() } : raw?.id || raw?._id ? { sourceId: String(raw.id || raw._id) } : null).catch(() => null);
+      const doc = await upsertLocalUserFromCore(raw); if (!doc) continue;
+      if (!before) created += 1; else updated += 1;
+      const z = await syncUserToZohoAndMark(doc); if (z?.ok) zohoCount += 1; if (z?.error) errors.push({ email: doc.email, error: z.error });
     }
-
     return { ok: true, synced: coreUsers.length, created, updated, zoho: zohoCount, errors };
-  } finally {
-    zohoSyncLock = false;
-  }
+  } finally { zohoSyncLock = false; }
 }
-
-async function syncSingleUserToZohoById(userId) {
-  const doc = await User.findById(userId).catch(() => null);
-  if (!doc) return { ok: false, msg: "Usuario no encontrado" };
-  return await syncUserToZohoAndMark(doc);
-}
-
-async function ensureInitialCoreSync() {
-  try {
-    const result = await syncCoreUsersToLocalAndZoho();
-    console.log("✅ Sync inicial core->local->zoho:", result);
-  } catch (err) {
-    console.warn("Sync inicial falló:", err?.message || err);
-  }
-}
-
-setTimeout(() => {
-  ensureInitialCoreSync();
-}, 3000);
-
-if (ZOHO_SYNC_INTERVAL_MS > 0) {
-  setInterval(() => {
-    syncCoreUsersToLocalAndZoho().catch((e) => console.warn("sync interval error:", e?.message || e));
-  }, ZOHO_SYNC_INTERVAL_MS).unref();
-}
+async function syncSingleUserToZohoById(userId) { const doc = await User.findById(userId).catch(() => null); if (!doc) return { ok: false, msg: "Usuario no encontrado" }; return await syncUserToZohoAndMark(doc); }
+async function ensureInitialCoreSync() { try { const result = await syncCoreUsersToLocalAndZoho(); console.log("✅ Sync inicial core->local->zoho:", result); } catch (err) { console.warn("Sync inicial falló:", err?.message || err); } }
+async function ensureInitialWithdrawSync() { try { const result = await syncCoreWithdrawsToLocal(); console.log("✅ Sync inicial withdraws:", result); } catch (err) { console.warn("Sync inicial withdraws falló:", err?.message || err); } }
+setTimeout(() => { ensureInitialCoreSync(); ensureInitialWithdrawSync(); }, 3000);
+if (ZOHO_SYNC_INTERVAL_MS > 0) { setInterval(() => { syncCoreUsersToLocalAndZoho().catch((e) => console.warn("sync interval error:", e?.message || e)); }, ZOHO_SYNC_INTERVAL_MS).unref(); }
+if (WITHDRAW_SYNC_INTERVAL_MS > 0) { setInterval(() => { syncCoreWithdrawsToLocal().catch((e) => console.warn("withdraw sync interval error:", e?.message || e)); }, WITHDRAW_SYNC_INTERVAL_MS).unref(); }
 
 /* ======================================================
    LOCAL BALANCE / WITHDRAW HELPERS
 ====================================================== */
 async function localDeposit({ userId, amount, leverage, note, currency = "USD" }) {
-  const user = await User.findById(userId).catch(() => null);
-  if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
-  const numericAmount = Math.abs(normalizeNumber(amount, 0));
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
-  }
-
-  const wallet = await getWalletDocForUser(user._id);
-  const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
-  const after = before + numericAmount;
-
-  wallet.balanceOwn = after;
-  wallet.balance = wallet.balanceOwn;
-  wallet.currency = currency || wallet.currency || "USD";
-
-  if (Number.isFinite(leverage) && leverage > 0) {
-    wallet.leverageFactor = leverage;
-    user.leverage = leverage;
-  }
-
-  wallet.equity = wallet.balanceOwn;
-  wallet.marginUsed = Number(wallet.marginUsed ?? 0) || 0;
-  wallet.freeMargin = Math.max(wallet.equity - wallet.marginUsed, 0);
-  wallet.marginLevel = wallet.marginUsed > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0;
-  wallet.updatedAt = new Date();
-  await wallet.save();
-
-  user.balance = wallet.balanceOwn;
-  user.currency = currency || user.currency || "USD";
-  if (Number.isFinite(leverage) && leverage > 0) user.leverage = leverage;
-  user.updatedAt = new Date();
-  await user.save();
-
-  const tx = await recordTransaction({
-    user,
-    type: "deposit",
-    amount: numericAmount,
-    status: "completed",
-    note,
-    balanceBefore: before,
-    balanceAfter: wallet.balanceOwn,
-    meta: { source: "local-fallback", currency, leverage: wallet.leverageFactor },
-    source: "admin-server.js/localDeposit",
-  });
-
-  const account = await buildAccountForUser(user);
-  emitStateUpdates(user._id, account, null, tx);
-  return {
-    ok: true,
-    status: 200,
-    data: {
-      ok: true,
-      msg: "Depósito aplicado",
-      data: {
-        balance: wallet.balanceOwn,
-        leverage: wallet.leverageFactor,
-        transaction: tx,
-        account: account.account,
-        wallet: account.wallet,
-      },
-    },
-  };
+  const user = await User.findById(userId).catch(() => null); if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  const numericAmount = Math.abs(normalizeNumber(amount, 0)); if (!Number.isFinite(numericAmount) || numericAmount <= 0) return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
+  const wallet = await getWalletDocForUser(user._id); const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0; const after = before + numericAmount;
+  wallet.balanceOwn = after; wallet.balance = wallet.balanceOwn; wallet.currency = currency || wallet.currency || "USD";
+  if (Number.isFinite(leverage) && leverage > 0) { wallet.leverageFactor = leverage; user.leverage = leverage; }
+  wallet.equity = wallet.balanceOwn; wallet.marginUsed = Number(wallet.marginUsed ?? 0) || 0; wallet.freeMargin = Math.max(wallet.equity - wallet.marginUsed, 0); wallet.marginLevel = wallet.marginUsed > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0; wallet.updatedAt = new Date(); await wallet.save();
+  user.balance = wallet.balanceOwn; user.currency = currency || user.currency || "USD"; if (Number.isFinite(leverage) && leverage > 0) user.leverage = leverage; user.updatedAt = new Date(); await user.save();
+  const tx = await recordTransaction({ user, type: "deposit", amount: numericAmount, status: "completed", note, balanceBefore: before, balanceAfter: wallet.balanceOwn, meta: { source: "local-fallback", currency, leverage: wallet.leverageFactor }, source: "admin-server.js/localDeposit" });
+  const account = await buildAccountForUser(user); emitStateUpdates(user._id, account, null, tx);
+  return { ok: true, status: 200, data: { ok: true, msg: "Depósito aplicado", data: { balance: wallet.balanceOwn, leverage: wallet.leverageFactor, transaction: tx, account: account.account, wallet: account.wallet } } };
 }
-
 async function localWithdraw({ userId, amount, note, force = false }) {
-  const user = await User.findById(userId).catch(() => null);
-  if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
-  const numericAmount = Math.abs(normalizeNumber(amount, 0));
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
-  }
-
-  const wallet = await getWalletDocForUser(user._id);
-  const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
-
-  if (!force && before < numericAmount) {
-    return { ok: false, status: 400, data: { ok: false, msg: "Saldo insuficiente" } };
-  }
-
+  const user = await User.findById(userId).catch(() => null); if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  const numericAmount = Math.abs(normalizeNumber(amount, 0)); if (!Number.isFinite(numericAmount) || numericAmount <= 0) return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
+  const wallet = await getWalletDocForUser(user._id); const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
+  if (!force && before < numericAmount) return { ok: false, status: 400, data: { ok: false, msg: "Saldo insuficiente" } };
   const after = force ? Math.max(0, before - numericAmount) : before - numericAmount;
-  wallet.balanceOwn = after;
-  wallet.balance = wallet.balanceOwn;
-  wallet.equity = wallet.balanceOwn;
-  wallet.freeMargin = Math.max(wallet.equity - (Number(wallet.marginUsed ?? 0) || 0), 0);
-  wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0;
-  wallet.updatedAt = new Date();
-  await wallet.save();
-
-  user.balance = wallet.balanceOwn;
-  user.updatedAt = new Date();
-  await user.save();
-
-  const tx = await recordTransaction({
-    user,
-    type: force ? "adjustment" : "withdrawal",
-    amount: -numericAmount,
-    status: "completed",
-    note,
-    balanceBefore: before,
-    balanceAfter: wallet.balanceOwn,
-    meta: { source: force ? "forced-local-fallback" : "local-fallback" },
-    source: "admin-server.js/localWithdraw",
-  });
-
-  const account = await buildAccountForUser(user);
-  emitStateUpdates(user._id, account, null, tx);
-  return {
-    ok: true,
-    status: 200,
-    data: {
-      ok: true,
-      msg: force ? "Saldo ajustado" : "Retiro aplicado",
-      data: {
-        balance: wallet.balanceOwn,
-        transaction: tx,
-        account: account.account,
-        wallet: account.wallet,
-      },
-    },
-  };
+  wallet.balanceOwn = after; wallet.balance = wallet.balanceOwn; wallet.equity = wallet.balanceOwn; wallet.freeMargin = Math.max(wallet.equity - (Number(wallet.marginUsed ?? 0) || 0), 0); wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0; wallet.updatedAt = new Date(); await wallet.save();
+  user.balance = wallet.balanceOwn; user.updatedAt = new Date(); await user.save();
+  const tx = await recordTransaction({ user, type: force ? "adjustment" : "withdrawal", amount: -numericAmount, status: "completed", note, balanceBefore: before, balanceAfter: wallet.balanceOwn, meta: { source: force ? "forced-local-fallback" : "local-fallback" }, source: "admin-server.js/localWithdraw" });
+  const account = await buildAccountForUser(user); emitStateUpdates(user._id, account, null, tx);
+  return { ok: true, status: 200, data: { ok: true, msg: force ? "Saldo ajustado" : "Retiro aplicado", data: { balance: wallet.balanceOwn, transaction: tx, account: account.account, wallet: account.wallet } } };
 }
-
 async function depositByDelta(req, res, userId, desiredBalance, leverage, note) {
-  const user = await User.findById(userId).catch(() => null);
-  if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
-  const wallet = await getWalletDocForUser(user._id);
-  const currentBalance = getEffectiveBalance(user, wallet.toObject ? wallet.toObject() : wallet);
-  const targetBalance = Math.max(0, normalizeNumber(desiredBalance, currentBalance));
-  const delta = targetBalance - currentBalance;
-
+  const user = await User.findById(userId).catch(() => null); if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
+  const wallet = await getWalletDocForUser(user._id); const currentBalance = getEffectiveBalance(user, wallet.toObject ? wallet.toObject() : wallet); const targetBalance = Math.max(0, normalizeNumber(desiredBalance, currentBalance)); const delta = targetBalance - currentBalance;
   if (delta > 0) {
-    const remote = await proxyToCore(req, "/api/admin/deposit", {
-      method: "POST",
-      body: {
-        userId,
-        amount: delta,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Update balance",
-      },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      return { ok: true, status: remote.status, data: remote.data };
-    }
-
-    return await localDeposit({
-      userId,
-      amount: delta,
-      leverage: leverage !== undefined ? Number(leverage) : undefined,
-      note: note || "Update balance",
-    });
+    const remote = await proxyToCore(req, "/api/admin/deposit", { method: "POST", body: { userId, amount: delta, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Update balance" } });
+    if (remote.ok) { if (remote.headers) relaySetCookies(remote.headers, res); return { ok: true, status: remote.status, data: remote.data }; }
+    return await localDeposit({ userId, amount: delta, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Update balance" });
   }
-
   if (delta < 0) {
-    const before = currentBalance;
-
-    wallet.balanceOwn = targetBalance;
-    wallet.balance = targetBalance;
-    wallet.equity = targetBalance;
-    wallet.freeMargin = Math.max(targetBalance - (Number(wallet.marginUsed ?? 0) || 0), 0);
-    wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.balance = targetBalance;
-    user.updatedAt = new Date();
-    await user.save();
-
-    if (leverage !== undefined && leverage !== null && leverage !== "") {
-      const lev = Number(leverage) || 1;
-      wallet.leverageFactor = lev;
-      user.leverage = lev;
-      wallet.updatedAt = new Date();
-      user.updatedAt = new Date();
-      await wallet.save();
-      await user.save();
-    }
-
-    const tx = await recordTransaction({
-      user,
-      type: "adjustment",
-      amount: delta,
-      status: "completed",
-      note: note || "Update balance",
-      balanceBefore: before,
-      balanceAfter: targetBalance,
-      meta: { source: "admin-update-balance", action: "set_balance" },
-      source: "admin-server.js/depositByDelta",
-    });
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(userId, account, null, tx);
-
-    return {
-      ok: true,
-      status: 200,
-      data: {
-        ok: true,
-        msg: "Saldo actualizado",
-        data: { balance: targetBalance, account: account.account, wallet: account.wallet, transaction: tx },
-      },
-    };
+    const before = currentBalance; wallet.balanceOwn = targetBalance; wallet.balance = targetBalance; wallet.equity = targetBalance; wallet.freeMargin = Math.max(targetBalance - (Number(wallet.marginUsed ?? 0) || 0), 0); wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0; wallet.updatedAt = new Date(); await wallet.save(); user.balance = targetBalance; user.updatedAt = new Date(); await user.save();
+    if (leverage !== undefined && leverage !== null && leverage !== "") { const lev = Number(leverage) || 1; wallet.leverageFactor = lev; user.leverage = lev; wallet.updatedAt = new Date(); user.updatedAt = new Date(); await wallet.save(); await user.save(); }
+    const tx = await recordTransaction({ user, type: "adjustment", amount: delta, status: "completed", note: note || "Update balance", balanceBefore: before, balanceAfter: targetBalance, meta: { source: "admin-update-balance", action: "set_balance" }, source: "admin-server.js/depositByDelta" });
+    const account = await buildAccountForUser(user); emitStateUpdates(userId, account, null, tx);
+    return { ok: true, status: 200, data: { ok: true, msg: "Saldo actualizado", data: { balance: targetBalance, account: account.account, wallet: account.wallet, transaction: tx } } };
   }
-
-  if (leverage !== undefined && leverage !== null && leverage !== "") {
-    const lev = Number(leverage) || 1;
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-  }
-
-  const payload = await buildAccountForUser(user);
-  emitStateUpdates(userId, payload, null, null);
-
-  return {
-    ok: true,
-    status: 200,
-    data: {
-      ok: true,
-      msg: "Saldo actualizado",
-      data: { balance: payload.account.balance, account: payload.account, wallet: payload.wallet },
-    },
-  };
+  if (leverage !== undefined && leverage !== null && leverage !== "") { const lev = Number(leverage) || 1; wallet.leverageFactor = lev; wallet.updatedAt = new Date(); await wallet.save(); user.leverage = lev; user.updatedAt = new Date(); await user.save(); }
+  const payload = await buildAccountForUser(user); emitStateUpdates(userId, payload, null, null);
+  return { ok: true, status: 200, data: { ok: true, msg: "Saldo actualizado", data: { balance: payload.account.balance, account: payload.account, wallet: payload.wallet } } };
 }
 
 /* ======================================================
@@ -1200,52 +678,19 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
-
-    if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) {
-      return res.status(500).json({ ok: false, msg: "Servidor admin mal configurado" });
-    }
-
-    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) {
-      return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
-    }
-
+    if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) return res.status(500).json({ ok: false, msg: "Servidor admin mal configurado" });
+    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
     const token = signAdminToken({ email });
-    res.cookie("admin_token", token, {
-      httpOnly: true,
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 8 * 60 * 60 * 1000,
-    });
-
+    res.cookie("admin_token", token, { httpOnly: true, sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", secure: process.env.NODE_ENV === "production", maxAge: 8 * 60 * 60 * 1000 });
     return res.json({ ok: true, token, msg: "Login correcto", admin: { email, role: "admin" } });
-  } catch (err) {
-    console.error("admin login error:", err);
-    return res.status(500).json({ ok: false, msg: "Error del servidor" });
-  }
+  } catch (err) { console.error("admin login error:", err); return res.status(500).json({ ok: false, msg: "Error del servidor" }); }
 });
 
 /* ======================================================
    SYNC CORE
 ====================================================== */
-app.post("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
-  try {
-    const result = await syncCoreUsersToLocalAndZoho();
-    return res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error("sync-core error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
-  }
-});
-
-app.get("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
-  try {
-    const result = await syncCoreUsersToLocalAndZoho();
-    return res.json({ ok: true, ...result });
-  } catch (err) {
-    console.error("sync-core error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
-  }
-});
+app.post("/api/admin/sync-core", ensureAdminAuth, async (req, res) => { try { const result = await syncCoreUsersToLocalAndZoho(); return res.json({ ok: true, ...result }); } catch (err) { console.error("sync-core error:", err); return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) }); } });
+app.get("/api/admin/sync-core", ensureAdminAuth, async (req, res) => { try { const result = await syncCoreUsersToLocalAndZoho(); return res.json({ ok: true, ...result }); } catch (err) { console.error("sync-core error:", err); return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) }); } });
 
 /* ======================================================
    USERS
@@ -1254,372 +699,67 @@ app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (req, res) =>
   try {
     const users = await User.find({}).select("-password -verificationToken -__v").sort({ createdAt: -1 }).lean().exec().catch(() => []);
     return res.json(users);
-  } catch (err) {
-    console.error("GET users error:", err);
-    return res.status(500).json({ ok: false, msg: "Error al listar usuarios" });
-  }
+  } catch (err) { console.error("GET users error:", err); return res.status(500).json({ ok: false, msg: "Error al listar usuarios" }); }
 });
-
-app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => {
-  try {
-    const user = await User.findById(req.params.id).catch(() => null);
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
-    const result = await syncUserToZohoAndMark(user);
-    return res.json({ ok: true, result });
-  } catch (err) {
-    console.error("sync single zoho error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando con Zoho", error: err?.message || String(err) });
-  }
-});
+app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => { try { const user = await User.findById(req.params.id).catch(() => null); if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" }); const result = await syncUserToZohoAndMark(user); return res.json({ ok: true, result }); } catch (err) { console.error("sync single zoho error:", err); return res.status(500).json({ ok: false, msg: "Error sincronizando con Zoho", error: err?.message || String(err) }); } });
 
 /* ======================================================
    ACCOUNT
 ====================================================== */
-app.get(["/api/admin/account/:userId", "/api/account/:userId"], ensureAdminAuth, async (req, res) => {
-  try {
-    const user = await getTargetUserForAdmin(req, res);
-    if (!user) return;
-    const payload = await buildAccountForUser(user);
-    return res.json({ ok: true, ...payload });
-  } catch (err) {
-    console.error("GET account error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
-  }
-});
-
-app.get(["/api/account", "/api/admin/account"], ensureAdminAuth, async (req, res) => {
-  try {
-    const user = await getTargetUserForAdmin(req, res);
-    if (!user) return;
-    const payload = await buildAccountForUser(user);
-    return res.json({ ok: true, ...payload });
-  } catch (err) {
-    console.error("GET account error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
-  }
-});
+app.get(["/api/admin/account/:userId", "/api/account/:userId"], ensureAdminAuth, async (req, res) => { try { const user = await getTargetUserForAdmin(req, res); if (!user) return; const payload = await buildAccountForUser(user); return res.json({ ok: true, ...payload }); } catch (err) { console.error("GET account error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" }); } });
+app.get(["/api/account", "/api/admin/account"], ensureAdminAuth, async (req, res) => { try { const user = await getTargetUserForAdmin(req, res); if (!user) return; const payload = await buildAccountForUser(user); return res.json({ ok: true, ...payload }); } catch (err) { console.error("GET account error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" }); } });
 
 /* ======================================================
    TRANSACTIONS
 ====================================================== */
-app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
-  try {
-    const userId = req.query.userId || null;
-    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-    const txs = userId
-      ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
-  } catch (err) {
-    console.error("/api/admin/transactions error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
-  }
-});
-
-app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
-  try {
-    const userId = req.query.userId || null;
-    const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
-    const txs = userId
-      ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
-  } catch (err) {
-    console.error("/api/transactions error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
-  }
-});
+app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => { try { const userId = req.query.userId || null; const limit = Math.min(Number(req.query.limit || 100) || 100, 500); const txs = userId ? await loadTransactionsForUser(userId, limit) : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []); return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs }); } catch (err) { console.error("/api/admin/transactions error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" }); } });
+app.get("/api/transactions", ensureAdminAuth, async (req, res) => { try { const userId = req.query.userId || null; const limit = Math.min(Number(req.query.limit || 50) || 50, 200); const txs = userId ? await loadTransactionsForUser(userId, limit) : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []); return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs }); } catch (err) { console.error("/api/transactions error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" }); } });
 
 /* ======================================================
    WITHDRAW REQUESTS
 ====================================================== */
-app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
-  try {
-    const data = await loadWithdrawsForUser(req.params.userId, "pending");
-    return res.json(data);
-  } catch (err) {
-    console.error("GET withdraws error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
-  }
-});
-
-app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
-  try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
-
-    const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
-
-    const userId = w.userId;
-    const amount = Number(w.amount || 0);
-
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: { userId, amount, note: `Aprobación de retiro #${id}` },
-    });
-
-    if (!remote.ok) {
-      const local = await localWithdraw({ userId, amount, note: `Aprobación de retiro #${id}` });
-      if (!local.ok) return res.status(local.status).json(local.data);
-    } else if (remote.headers) {
-      relaySetCookies(remote.headers, res);
-    }
-
-    w.status = "approved";
-    w.updatedAt = new Date();
-    await w.save();
-
-    io.emit("admin:withdraw-response", { userId, status: "approved", id });
-    io.emit(`withdraw:${userId}`, "approved");
-
-    return res.json({ ok: true, msg: "Retiro aprobado" });
-  } catch (err) {
-    console.error("POST withdraw/approve error:", err);
-    return res.status(500).json({ ok: false, msg: "Error aprobando retiro" });
-  }
-});
-
-app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
-  try {
-    const { id } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
-
-    const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
-
-    w.status = "rejected";
-    w.updatedAt = new Date();
-    await w.save();
-
-    io.emit("admin:withdraw-response", { userId: w.userId, status: "rejected", id });
-    io.emit(`withdraw:${w.userId}`, "rejected");
-
-    return res.json({ ok: true, msg: "Retiro rechazado" });
-  } catch (err) {
-    console.error("POST withdraw/reject error:", err);
-    return res.status(500).json({ ok: false, msg: "Error rechazando retiro" });
-  }
-});
+app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => { try { const data = await loadWithdrawsForUser(req.params.userId, "pending"); return res.json(data); } catch (err) { console.error("GET withdraws error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" }); } });
+app.get("/api/admin/withdraw-requests", ensureAdminAuth, async (req, res) => { try { const status = String(req.query.status || "pending").trim().toLowerCase(); const limit = Math.min(Number(req.query.limit || 200) || 200, 500); const query = {}; if (status && status !== "all") query.status = status; const rows = await Withdraw.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []); return res.json({ ok: true, count: rows.length, withdraws: rows, data: rows }); } catch (err) { console.error("GET withdraw-requests error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo solicitudes" }); } });
+app.get("/api/admin/withdraw-requests/:id", ensureAdminAuth, async (req, res) => { try { const row = await Withdraw.findById(req.params.id).lean().exec().catch(() => null); if (!row) return res.status(404).json({ ok: false, msg: "Solicitud no encontrada" }); return res.json({ ok: true, withdraw: row }); } catch (err) { console.error("GET withdraw request error:", err); return res.status(500).json({ ok: false, msg: "Error obteniendo solicitud" }); } });
+app.post("/api/admin/withdraw/review", ensureAdminAuth, async (req, res) => { try { const { id, action, amount, note } = req.body || {}; if (!id || !action) return res.status(400).json({ ok: false, msg: "id y action requeridos" }); const result = await reviewWithdrawRequest({ id, action, amount, note: note || "", reviewedBy: req.user?.email || req.body?.reviewedBy || "admin" }); if (!result.ok) return res.status(result.status || 400).json({ ok: false, msg: result.msg || "Error" }); return res.json({ ok: true, withdraw: result.withdraw, msg: "Solicitud actualizada" }); } catch (err) { console.error("withdraw review error:", err); return res.status(500).json({ ok: false, msg: "Error revisando solicitud" }); } });
+app.post("/api/admin/withdraw/counteroffer", ensureAdminAuth, async (req, res) => { try { const { id, amount, note } = req.body || {}; if (!id || typeof amount === "undefined" || amount === null || amount === "") return res.status(400).json({ ok: false, msg: "id y amount requeridos" }); const result = await reviewWithdrawRequest({ id, action: "counteroffer", amount, note: note || "Contraoferta del admin", reviewedBy: req.user?.email || req.body?.reviewedBy || "admin" }); if (!result.ok) return res.status(result.status || 400).json({ ok: false, msg: result.msg || "Error" }); return res.json({ ok: true, withdraw: result.withdraw, msg: "Contraoferta enviada" }); } catch (err) { console.error("withdraw counteroffer error:", err); return res.status(500).json({ ok: false, msg: "Error enviando contraoferta" }); } });
+app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => { try { const { id } = req.body || {}; if (!id) return res.status(400).json({ ok: false, msg: "id requerido" }); const w = await Withdraw.findById(id).catch(() => null); if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" }); const userId = w.userId; const amount = Number(w.amount || 0); const remote = await proxyToCore(req, "/api/admin/withdraw", { method: "POST", body: { userId, amount, note: `Aprobación de retiro #${id}` } }); if (!remote.ok) { const local = await localWithdraw({ userId, amount, note: `Aprobación de retiro #${id}` }); if (!local.ok) return res.status(local.status).json(local.data); } else if (remote.headers) relaySetCookies(remote.headers, res); w.status = "approved"; w.adminAction = "approve"; w.reviewedAt = new Date(); w.updatedAt = new Date(); w.reviewHistory = Array.isArray(w.reviewHistory) ? w.reviewHistory : []; w.reviewHistory.push({ action: "approve", amount: w.amount, note: `Aprobación de retiro #${id}`, at: new Date().toISOString() }); await w.save(); io.emit("admin:withdraw-response", { userId, status: "approved", id }); io.emit(`withdraw:${userId}`, "approved"); return res.json({ ok: true, msg: "Retiro aprobado" }); } catch (err) { console.error("POST withdraw/approve error:", err); return res.status(500).json({ ok: false, msg: "Error aprobando retiro" }); } });
+app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => { try { const { id, note } = req.body || {}; if (!id) return res.status(400).json({ ok: false, msg: "id requerido" }); const w = await Withdraw.findById(id).catch(() => null); if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" }); w.status = "rejected"; w.adminAction = "reject"; w.adminNote = note || w.adminNote || ""; w.reviewedAt = new Date(); w.updatedAt = new Date(); w.reviewHistory = Array.isArray(w.reviewHistory) ? w.reviewHistory : []; w.reviewHistory.push({ action: "reject", amount: w.amount, note: note || "", at: new Date().toISOString() }); await w.save(); io.emit("admin:withdraw-response", { userId: w.userId, status: "rejected", id }); io.emit(`withdraw:${w.userId}`, "rejected"); return res.json({ ok: true, msg: "Retiro rechazado" }); } catch (err) { console.error("POST withdraw/reject error:", err); return res.status(500).json({ ok: false, msg: "Error rechazando retiro" }); } });
+app.put("/api/admin/withdraws/:id", ensureAdminAuth, async (req, res) => { try { const { amount, status, note, counterOfferAmount } = req.body || {}; const w = await Withdraw.findById(req.params.id).catch(() => null); if (!w) return res.status(404).json({ ok: false, msg: "Solicitud no encontrada" }); if (typeof amount !== "undefined" && amount !== null && amount !== "") { w.amount = normalizeNumber(amount, w.amount || 0); w.requestedAmount = w.amount; } if (typeof counterOfferAmount !== "undefined" && counterOfferAmount !== null && counterOfferAmount !== "") { w.counterOfferAmount = normalizeNumber(counterOfferAmount, w.counterOfferAmount || 0); } if (status) w.status = String(status).trim().toLowerCase(); if (note) w.adminNote = note; w.adminAction = "update"; w.reviewedAt = new Date(); w.updatedAt = new Date(); w.reviewHistory = Array.isArray(w.reviewHistory) ? w.reviewHistory : []; w.reviewHistory.push({ action: "update", amount: w.amount, counterOfferAmount: w.counterOfferAmount, note: note || "", at: new Date().toISOString() }); await w.save(); io.emit("admin:withdraw-response", { userId: w.userId, status: w.status, id: w.id }); return res.json({ ok: true, msg: "Solicitud actualizada", withdraw: w }); } catch (err) { console.error("PUT withdraw error:", err); return res.status(500).json({ ok: false, msg: "Error actualizando solicitud" }); } });
 
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
-app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, leverage } = req.body || {};
-    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
-      return res.status(400).json({ msg: "Datos incompletos" });
-    }
-
-    const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(userId, account, null, null);
-
-    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
-  } catch (err) {
-    console.error("/api/admin/update-leverage error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
-  try {
-    const { leverage } = req.body || {};
-    const user = await User.findById(req.params.id).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(String(user._id), account, null, null);
-
-    return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet });
-  } catch (err) {
-    console.error("PUT /admin/users/leverage/:id error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
+app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => { try { const { userId, leverage } = req.body || {}; if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") return res.status(400).json({ msg: "Datos incompletos" }); const user = await User.findById(userId).catch(() => null); if (!user) return res.status(404).json({ msg: "Usuario no encontrado" }); const lev = Number(leverage); if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" }); const wallet = await getWalletDocForUser(user._id); wallet.leverageFactor = lev; wallet.updatedAt = new Date(); await wallet.save(); user.leverage = lev; user.updatedAt = new Date(); await user.save(); const account = await buildAccountForUser(user); emitStateUpdates(userId, account, null, null); return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet }); } catch (err) { console.error("/api/admin/update-leverage error:", err); return res.status(500).json({ msg: "Error actualizando leverage" }); } });
+app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => { try { const { leverage } = req.body || {}; const user = await User.findById(req.params.id).catch(() => null); if (!user) return res.status(404).json({ msg: "Usuario no encontrado" }); const lev = Number(leverage); if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" }); const wallet = await getWalletDocForUser(user._id); wallet.leverageFactor = lev; wallet.updatedAt = new Date(); await wallet.save(); user.leverage = lev; user.updatedAt = new Date(); await user.save(); const account = await buildAccountForUser(user); emitStateUpdates(String(user._id), account, null, null); return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet }); } catch (err) { console.error("PUT /admin/users/leverage/:id error:", err); return res.status(500).json({ msg: "Error actualizando leverage" }); } });
 
 /* ======================================================
    UPDATE BALANCE
 ====================================================== */
-app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, balance, leverage, note } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
-
-    const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
-    if (result?.headers) relaySetCookies(result.headers, res);
-
-    if (result && result.ok) return res.status(result.status).json(result.data);
-    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
-  } catch (err) {
-    console.error("/api/admin/update-balance error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
-  }
-});
+app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => { try { const { userId, balance, leverage, note } = req.body || {}; if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" }); const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance"); if (result?.headers) relaySetCookies(result.headers, res); if (result && result.ok) return res.status(result.status).json(result.data); return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" }); } catch (err) { console.error("/api/admin/update-balance error:", err); return res.status(500).json({ ok: false, msg: "Error actualizando saldo" }); } });
 
 /* ======================================================
    DEPOSIT / WITHDRAW
 ====================================================== */
-app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, leverage, note, currency } = req.body || {};
-    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/deposit", {
-      method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Admin deposit",
-        currency: currency || "USD",
-      },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localDeposit({
-      userId,
-      amount: numericAmount,
-      leverage: leverage !== undefined ? Number(leverage) : undefined,
-      note: note || "Admin deposit",
-      currency: currency || "USD",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/deposit error:", err);
-    return res.status(500).json({ ok: false, msg: "Error depósito" });
-  }
-});
-
-app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, note } = req.body || {};
-    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: { userId, amount: numericAmount, note: note || "Admin withdrawal" },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-      io.emit(`withdraw:${userId}`, "approved");
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localWithdraw({
-      userId,
-      amount: numericAmount,
-      note: note || "Admin withdrawal",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/withdraw error:", err);
-    return res.status(500).json({ ok: false, msg: "Error retiro" });
-  }
-});
+app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => { try { const { userId, amount, leverage, note, currency } = req.body || {}; if (!userId || typeof amount === "undefined" || amount === null || amount === "") return res.status(400).json({ ok: false, error: "userId y amount son requeridos" }); const numericAmount = normalizeNumber(amount); if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ ok: false, error: "amount inválido" }); const remote = await proxyToCore(req, "/api/admin/deposit", { method: "POST", body: { userId, amount: numericAmount, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Admin deposit", currency: currency || "USD" } }); if (remote.ok) { if (remote.headers) relaySetCookies(remote.headers, res); const tx = remote.data?.data?.transaction || remote.data?.transaction || null; const account = remote.data?.data?.account || remote.data?.account || null; const wallet = remote.data?.data?.wallet || remote.data?.wallet || null; const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null; emitStateUpdates(userId, { account, wallet }, null, tx); if (balance !== null) io.emit(`balance:${userId}`, balance); return res.status(remote.status).json(remote.data); } const local = await localDeposit({ userId, amount: numericAmount, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Admin deposit", currency: currency || "USD" }); return res.status(local.status).json(local.data); } catch (err) { console.error("/api/admin/deposit error:", err); return res.status(500).json({ ok: false, msg: "Error depósito" }); } });
+app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => { try { const { userId, amount, note } = req.body || {}; if (!userId || typeof amount === "undefined" || amount === null || amount === "") return res.status(400).json({ ok: false, error: "userId y amount son requeridos" }); const numericAmount = normalizeNumber(amount); if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ ok: false, error: "amount inválido" }); const remote = await proxyToCore(req, "/api/admin/withdraw", { method: "POST", body: { userId, amount: numericAmount, note: note || "Admin withdrawal" } }); if (remote.ok) { if (remote.headers) relaySetCookies(remote.headers, res); const tx = remote.data?.data?.transaction || remote.data?.transaction || null; const account = remote.data?.data?.account || remote.data?.account || null; const wallet = remote.data?.data?.wallet || remote.data?.wallet || null; const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null; emitStateUpdates(userId, { account, wallet }, null, tx); if (balance !== null) io.emit(`balance:${userId}`, balance); io.emit(`withdraw:${userId}`, "approved"); return res.status(remote.status).json(remote.data); } const local = await localWithdraw({ userId, amount: numericAmount, note: note || "Admin withdrawal" }); return res.status(local.status).json(local.data); } catch (err) { console.error("/api/admin/withdraw error:", err); return res.status(500).json({ ok: false, msg: "Error retiro" }); } });
 
 /* ======================================================
    ROOT / HEALTH
 ====================================================== */
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "admin.html"));
-});
-
-app.get("/healthz", (req, res) => {
-  res.json({
-    ok: true,
-    env: process.env.NODE_ENV || "development",
-    dbReadyState: mongoose.connection.readyState,
-    coreConfigured: !!CORE_API_URL,
-    adminApiKeyConfigured: !!ADMIN_API_KEY,
-    adminEmailConfigured: !!ADMIN_EMAIL,
-    adminTokenSecretConfigured: !!JWT_SECRET,
-    mongoConfigured: !!process.env.MONGO_URI,
-    zohoConfigured: zohoReady(),
-  });
-});
+app.get("/", (req, res) => { res.sendFile(path.join(__dirname, "public", "admin.html")); });
+app.get("/healthz", (req, res) => { res.json({ ok: true, env: process.env.NODE_ENV || "development", dbReadyState: mongoose.connection.readyState, coreConfigured: !!CORE_API_URL, adminApiKeyConfigured: !!ADMIN_API_KEY, adminEmailConfigured: !!ADMIN_EMAIL, adminTokenSecretConfigured: !!JWT_SECRET, mongoConfigured: !!process.env.MONGO_URI, zohoConfigured: zohoReady(), withdrawSyncConfigured: !!WITHDRAW_SYNC_INTERVAL_MS }); });
 
 /* ======================================================
    FALLBACKS
 ====================================================== */
-app.use("/api", (req, res) => {
-  res.status(404).json({ ok: false, msg: "API endpoint not found" });
-});
-
-app.use((err, req, res, next) => {
-  console.error("Unhandled error (admin):", err);
-  res.status(err.status || 500).json({
-    ok: false,
-    msg: "Error servidor",
-    detail: process.env.NODE_ENV === "development" ? err.message || String(err) : undefined,
-  });
-});
+app.use("/api", (req, res) => { res.status(404).json({ ok: false, msg: "API endpoint not found" }); });
+app.use((err, req, res, next) => { console.error("Unhandled error (admin):", err); res.status(err.status || 500).json({ ok: false, msg: "Error servidor", detail: process.env.NODE_ENV === "development" ? err.message || String(err) : undefined }); });
 
 /* ======================================================
    START SERVER
 ====================================================== */
 const PORT = Number(process.env.PORT || 4000);
-
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🔥 ADMIN RUNNING EN: ${PORT}`);
   console.log("ENV:");
@@ -1635,51 +775,20 @@ server.listen(PORT, "0.0.0.0", () => {
    GRACEFUL SHUTDOWN
 ====================================================== */
 let shuttingDown = false;
-
 const gracefulShutdown = async (signal) => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`📴 ${signal} recibido. Cerrando servidor admin...`);
-
-  const force = setTimeout(() => {
-    console.warn("Forzando cierre admin...");
-    process.exit(1);
-  }, 30_000);
+  const force = setTimeout(() => { console.warn("Forzando cierre admin..."); process.exit(1); }, 30_000);
   force.unref();
-
   try {
-    await new Promise((resolve, reject) => {
-      server.close((err) => {
-        if (err) return reject(err);
-        resolve();
-      });
-    });
-
-    try {
-      io.emit("server:shutdown");
-      await new Promise((resolve) => io.close(resolve));
-    } catch {}
-
-    try {
-      await mongoose.disconnect();
-    } catch {}
-
-    clearTimeout(force);
-    process.exit(0);
-  } catch (err) {
-    console.error("Error durante shutdown admin:", err);
-    clearTimeout(force);
-    process.exit(1);
-  }
+    await new Promise((resolve, reject) => { server.close((err) => { if (err) return reject(err); resolve(); }); });
+    try { io.emit("server:shutdown"); await new Promise((resolve) => io.close(resolve)); } catch {}
+    try { await mongoose.disconnect(); } catch {}
+    clearTimeout(force); process.exit(0);
+  } catch (err) { console.error("Error durante shutdown admin:", err); clearTimeout(force); process.exit(1); }
 };
-
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("unhandledRejection", (r) => {
-  console.error("UnhandledRejection (admin):", r);
-  gracefulShutdown("unhandledRejection");
-});
-process.on("uncaughtException", (e) => {
-  console.error("UncaughtException (admin):", e);
-  gracefulShutdown("uncaughtException");
-});
+process.on("unhandledRejection", (r) => { console.error("UnhandledRejection (admin):", r); gracefulShutdown("unhandledRejection"); });
+process.on("uncaughtException", (e) => { console.error("UncaughtException (admin):", e); gracefulShutdown("uncaughtException"); });
