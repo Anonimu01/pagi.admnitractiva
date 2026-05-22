@@ -1,17 +1,26 @@
 const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  userId: String,
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  userId: { type: String }, // opcional, por compatibilidad
 
-  type: String, // deposit | withdrawal
+  type: { 
+    type: String, 
+    enum: ["deposit", "withdrawal", "adjustment"], 
+    required: true 
+  },
 
-  amount: Number,
+  amount: { type: Number, required: true },
 
-  balanceBefore: Number,
-  balanceAfter: Number,
+  balanceBefore: { type: Number, required: true },
+  balanceAfter: { type: Number, required: true },
 
-  createdAt: { type: Date, default: Date.now }
+  note: { type: String, default: "" }, // para notas como "Admin deposit" o "Aprobación retiro"
+  status: { type: String, enum: ["pending", "completed", "failed"], default: "completed" },
+  meta: { type: Object, default: {} }, // para guardar información extra (source, currency, leverage, etc.)
+
+}, {
+  timestamps: true // crea createdAt y updatedAt automáticamente
 });
 
 module.exports = mongoose.model("Transaction", transactionSchema);
