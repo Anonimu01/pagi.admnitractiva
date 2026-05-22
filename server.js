@@ -957,7 +957,65 @@ if (ZOHO_SYNC_INTERVAL_MS > 0) {
   }, ZOHO_SYNC_INTERVAL_MS).unref();
 }
 
+// Endpoint para subir documentos
+app.post("/api/admin/verification/upload", ensureAdminAuth, upload.single("file"), async (req, res) => {
+  try {
+    const { userId, type } = req.body;
+    if (!userId || !req.file) return res.status(400).json({ ok: false, msg: "userId y archivo son requeridos" });
 
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+
+    const doc = new VerificationDocument({
+      userId,
+      type,
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      path: req.file.path,
+      status: "pending",
+      uploadedAt: new Date(),
+    });
+    await doc.save();
+
+    io.emit(`verification:${userId}`, { status: "uploaded", documentId: doc._id });
+    return res.json({ ok: true, msg: "Documento subido correctamente", document: doc });
+  } catch (err) {
+    console.error("/api/admin/verification/upload error:", err);
+    return res.status(500).json({ ok: false, msg: "Error subiendo documento" });
+  }
+});
+
+// Endpoint de retiro con documento
+app.post("/api/admin/withdraw", ensureAdminAuth, upload.single("proof"), async (req, res) => {
+  try {
+    const { userId, amount, account, note } = req.body;
+    if (!userId || !amount || !account) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ ok: false, msg: "Monto inválido" });
+
+    const withdrawDoc = req.file
+      ? { filename: req.file.filename, originalName: req.file.originalname, path: req.file.path }
+      : null;
+
+    const w = new Withdraw({
+      userId,
+      amount: numericAmount,
+      account,
+      note,
+      document: withdrawDoc,
+      status: "pending",
+      createdAt: new Date(),
+    });
+    await w.save();
+
+    io.emit(`withdraw:${userId}`, { status: "pending", withdrawId: w._id });
+    return res.json({ ok: true, msg: "Retiro solicitado correctamente", withdraw: w });
+  } catch (err) {
+    console.error("/api/admin/withdraw error:", err);
+    return res.status(500).json({ ok: false, msg: "Error solicitando retiro" });
+  }
+});
 
 /* ======================================================
    MODELOS ADICIONALES
