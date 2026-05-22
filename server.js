@@ -234,6 +234,89 @@ app.use((req, res, next) => {
   next();
 });
 
+
+
+/* ======================================================
+   WITHDRAW REQUESTS (ADMIN VIEW)
+====================================================== */
+
+// Lista todos los retiros, incluyendo documentos, para admin
+app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
+  try {
+    const withdraws = await Withdraw.find({})
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const result = withdraws.map((w) => ({
+      ...w,
+      proofUrl: w.proofUrl || null,
+      amount: w.amount || 0,
+      status: w.status || "pending",
+      userId: w.userId,
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    }));
+
+    return res.json({ ok: true, count: result.length, withdraws: result });
+  } catch (err) {
+    console.error("GET /api/admin/withdraws error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros", error: err?.message || String(err) });
+  }
+});
+
+// Para un usuario específico, incluyendo documento
+app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const withdraws = await Withdraw.find({ userId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const result = withdraws.map((w) => ({
+      ...w,
+      proofUrl: w.proofUrl || null,
+      amount: w.amount || 0,
+      status: w.status || "pending",
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+    }));
+
+    return res.json({ ok: true, count: result.length, withdraws: result });
+  } catch (err) {
+    console.error(`GET /api/admin/withdraws/${req.params.userId} error:`, err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros", error: err?.message || String(err) });
+  }
+});
+
+// Lista todos los documentos del usuario
+app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const docs = await Document.find({ userId })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const result = docs.map((d) => ({
+      _id: d._id,
+      userId: d.userId,
+      type: d.type || d.Tipo || "Desconocido",
+      documentUrl: d.documentUrl || d.proofUrl || null,
+      status: d.status || d.Estado || "pendiente",
+      adminNote: d.adminNote || "",
+      createdAt: d.createdAt,
+      updatedAt: d.updatedAt,
+    }));
+
+    return res.json({ ok: true, count: result.length, documents: result });
+  } catch (err) {
+    console.error(`GET /api/admin/documents/${req.params.userId} error:`, err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos", error: err?.message || String(err) });
+  }
+});
+
 /* ======================================================
    HELPERS
 ====================================================== */
