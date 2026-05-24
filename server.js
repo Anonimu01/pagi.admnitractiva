@@ -2039,29 +2039,66 @@ app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, re
 app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, amount, note } = req.body || {};
+
     if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
+      return res.status(400).json({
+        ok: false,
+        error: "userId y amount son requeridos",
+      });
     }
 
     const numericAmount = normalizeNumber(amount);
+
     if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
+      return res.status(400).json({
+        ok: false,
+        error: "amount inválido",
+      });
     }
 
     const remote = await proxyToCore(req, "/api/admin/withdraw", {
       method: "POST",
-      body: { userId, amount: numericAmount, note: note || "Admin withdrawal" },
+      body: {
+        userId,
+        amount: numericAmount,
+        note: note || "Admin withdrawal",
+      },
     });
 
     if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+      if (remote.headers) {
+        relaySetCookies(remote.headers, res);
+      }
+
+      const tx =
+        remote.data?.data?.transaction ||
+        remote.data?.transaction ||
+        null;
+
+      const account =
+        remote.data?.data?.account ||
+        remote.data?.account ||
+        null;
+
+      const wallet =
+        remote.data?.data?.wallet ||
+        remote.data?.wallet ||
+        null;
+
+      const balance =
+        remote.data?.data?.balance ??
+        remote.data?.balance ??
+        account?.balance ??
+        null;
+
       emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
+
+      if (balance !== null) {
+        io.emit(`balance:${userId}`, balance);
+      }
+
       io.emit(`withdraw:${userId}`, "approved");
+
       return res.status(remote.status).json(remote.data);
     }
 
@@ -2072,11 +2109,18 @@ app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, 
     });
 
     return res.status(local.status).json(local.data);
+
   } catch (err) {
     console.error("/api/admin/withdraw error:", err);
-    return res.status(500).json({ ok: false, msg: "Error retiro" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error retiro",
+    });
   }
-   /* ======================================================
+});
+
+/* ======================================================
    SERVER START
 ====================================================== */
 
@@ -2085,4 +2129,3 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
-
