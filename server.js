@@ -2076,4 +2076,13 @@ app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, 
     console.error("/api/admin/withdraw error:", err);
     return res.status(500).json({ ok: false, msg: "Error retiro" });
   }
+   /* ======================================================
+   SERVER START
+====================================================== */
+
+const PORT = process.env.PORT || 10000;
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
+
