@@ -47,6 +47,7 @@ const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000
 if (!CORE_API_URL) {
   console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
 }
+
 if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
   console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
 }
@@ -62,9 +63,11 @@ mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
   startAdminRealtimeFeed();
 });
+
 mongoose.connection.on("error", (err) => {
   console.error("❌ Mongo connection error:", err);
 });
+
 mongoose.connection.on("disconnected", () => {
   console.warn("⚠️ Mongo disconnected");
 });
@@ -81,7 +84,7 @@ const userSchema = new mongoose.Schema(
     fullName: { type: String, default: "" },
     phone: { type: String, default: "" },
     address: { type: String, default: "" },
-    password: { type: String, select: false }, // no se expone al admin
+    password: { type: String, select: false },
     balance: { type: Number, default: 0 },
     leverage: { type: Number, default: 1 },
     currency: { type: String, default: "USD" },
@@ -168,6 +171,7 @@ const withdrawSchema = new mongoose.Schema(
   },
   { minimize: false, strict: false }
 );
+
 const documentSchema = new mongoose.Schema(
   {
     userId: { type: String, index: true },
@@ -184,7 +188,6 @@ const documentSchema = new mongoose.Schema(
 );
 
 const Document = mongoose.models.Document || mongoose.model("Document", documentSchema);
-
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Wallet = mongoose.models.Wallet || mongoose.model("Wallet", walletSchema);
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", transactionSchema);
@@ -198,6 +201,7 @@ const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL
 
 function parseAllowedOrigins(raw) {
   if (!raw || raw === "*") return "*";
+
   return String(raw)
     .split(",")
     .map((s) => s.trim())
@@ -210,12 +214,23 @@ app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (ALLOWED_ORIGINS === "*") return callback(null, true);
-      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+
+      if (ALLOWED_ORIGINS === "*") {
+        return callback(null, true);
+      }
+
+      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
       try {
         const url = new URL(origin);
-        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return callback(null, true);
+
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
       } catch {}
+
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -224,7 +239,7 @@ app.use(
 
 app.use(
   rateLimit({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000),
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
     max: Number(process.env.RATE_LIMIT_MAX || 200),
     standardHeaders: true,
     legacyHeaders: false,
@@ -245,11 +260,16 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
 app.set("io", io);
+
 app.use((req, res, next) => {
   req.io = io;
   next();
 });
+
+io.on("connection", (socket) => {
+  console.log("socket connected", socket.id);
 
   socket.on("request_withdraws", async (filters = {}) => {
     try {
@@ -293,6 +313,10 @@ app.use((req, res, next) => {
     }
   });
 
+  socket.on("disconnect", () => {
+    console.log("socket disconnected", socket.id);
+  });
+});
 /* ======================================================
    HELPERS
 ====================================================== */
