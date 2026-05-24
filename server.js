@@ -724,12 +724,17 @@ async function loadTransactionsForUser(userId, limit = 50) {
   return await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
-async function loadWithdrawsForUser(userId, status = "pending") {
+async function loadWithdrawsForUser(userId, status = "pendiente") {
   const query = { userId: String(userId) };
-  if (status) query.status = status;
-  return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []);
-}
 
+  if (status) query.Estado = status;
+
+  return await Withdraw.find(query)
+    .sort({ createdAt: -1 })
+    .lean()
+    .exec()
+    .catch(() => []);
+}
 
 
 async function recordTransaction({
@@ -1414,17 +1419,30 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+
+    if (!email || !password) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Datos incompletos",
+      });
+    }
 
     if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) {
-      return res.status(500).json({ ok: false, msg: "Servidor admin mal configurado" });
+      return res.status(500).json({
+        ok: false,
+        msg: "Servidor admin mal configurado",
+      });
     }
 
     if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) {
-      return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
+      return res.status(401).json({
+        ok: false,
+        msg: "Credenciales inválidas",
+      });
     }
 
     const token = signAdminToken({ email });
+
     res.cookie("admin_token", token, {
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -1432,10 +1450,22 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
       maxAge: 8 * 60 * 60 * 1000,
     });
 
-    return res.json({ ok: true, token, msg: "Login correcto", admin: { email, role: "admin" } });
+    return res.json({
+      ok: true,
+      token,
+      msg: "Login correcto",
+      admin: {
+        email,
+        role: "admin",
+      },
+    });
   } catch (err) {
     console.error("admin login error:", err);
-    return res.status(500).json({ ok: false, msg: "Error del servidor" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error del servidor",
+    });
   }
 });
 
@@ -1445,20 +1475,38 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
 app.post("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
   try {
     const result = await syncCoreUsersToLocalAndZoho();
-    return res.json({ ok: true, ...result });
+
+    return res.json({
+      ok: true,
+      ...result,
+    });
   } catch (err) {
     console.error("sync-core error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error sincronizando core",
+      error: err?.message || String(err),
+    });
   }
 });
 
 app.get("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
   try {
     const result = await syncCoreUsersToLocalAndZoho();
-    return res.json({ ok: true, ...result });
+
+    return res.json({
+      ok: true,
+      ...result,
+    });
   } catch (err) {
     console.error("sync-core error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error sincronizando core",
+      error: err?.message || String(err),
+    });
   }
 });
 
@@ -1467,23 +1515,49 @@ app.get("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
 ====================================================== */
 app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (req, res) => {
   try {
-    const users = await User.find({}).select("-password -verificationToken -__v").sort({ createdAt: -1 }).lean().exec().catch(() => []);
+    const users = await User.find({})
+      .select("-password -verificationToken -__v")
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec()
+      .catch(() => []);
+
     return res.json(users);
   } catch (err) {
     console.error("GET users error:", err);
-    return res.status(500).json({ ok: false, msg: "Error al listar usuarios" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error al listar usuarios",
+    });
   }
 });
 
 app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => {
   try {
     const user = await User.findById(req.params.id).catch(() => null);
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado",
+      });
+    }
+
     const result = await syncUserToZohoAndMark(user);
-    return res.json({ ok: true, result });
+
+    return res.json({
+      ok: true,
+      result,
+    });
   } catch (err) {
     console.error("sync single zoho error:", err);
-    return res.status(500).json({ ok: false, msg: "Error sincronizando con Zoho", error: err?.message || String(err) });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error sincronizando con Zoho",
+      error: err?.message || String(err),
+    });
   }
 });
 
@@ -1493,24 +1567,44 @@ app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => 
 app.get(["/api/admin/account/:userId", "/api/account/:userId"], ensureAdminAuth, async (req, res) => {
   try {
     const user = await getTargetUserForAdmin(req, res);
+
     if (!user) return;
+
     const payload = await buildAccountForUser(user);
-    return res.json({ ok: true, ...payload });
+
+    return res.json({
+      ok: true,
+      ...payload,
+    });
   } catch (err) {
     console.error("GET account error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo cuenta",
+    });
   }
 });
 
 app.get(["/api/account", "/api/admin/account"], ensureAdminAuth, async (req, res) => {
   try {
     const user = await getTargetUserForAdmin(req, res);
+
     if (!user) return;
+
     const payload = await buildAccountForUser(user);
-    return res.json({ ok: true, ...payload });
+
+    return res.json({
+      ok: true,
+      ...payload,
+    });
   } catch (err) {
     console.error("GET account error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo cuenta",
+    });
   }
 });
 
@@ -1521,13 +1615,30 @@ app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
+
     const txs = userId
       ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
+      : await Transaction.find({})
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean()
+          .exec()
+          .catch(() => []);
+
+    return res.json({
+      ok: true,
+      count: txs.length,
+      transactions: txs,
+      data: txs,
+      items: txs,
+    });
   } catch (err) {
     console.error("/api/admin/transactions error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo transacciones",
+    });
   }
 });
 
@@ -1535,13 +1646,30 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
     const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
+
     const txs = userId
       ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
+      : await Transaction.find({})
+          .sort({ createdAt: -1 })
+          .limit(limit)
+          .lean()
+          .exec()
+          .catch(() => []);
+
+    return res.json({
+      ok: true,
+      count: txs.length,
+      transactions: txs,
+      data: txs,
+      items: txs,
+    });
   } catch (err) {
     console.error("/api/transactions error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo transacciones",
+    });
   }
 });
 
@@ -1551,72 +1679,143 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
 app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
   try {
     const data = await loadWithdrawsForUser(req.params.userId, "pending");
-    return res.json(data);
+
+    return res.json({
+      ok: true,
+      count: data.length,
+      withdraws: data,
+      data,
+      items: data,
+    });
   } catch (err) {
     console.error("GET withdraws error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo retiros",
+    });
   }
 });
 
 app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
   try {
     const { id } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "id requerido",
+      });
+    }
 
     const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
+
+    if (!w) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
 
     const userId = w.userId;
     const amount = Number(w.amount || 0);
 
     const remote = await proxyToCore(req, "/api/admin/withdraw", {
       method: "POST",
-      body: { userId, amount, note: `Aprobación de retiro #${id}` },
+      body: {
+        userId,
+        amount,
+        note: `Aprobación de retiro #${id}`,
+      },
     });
 
     if (!remote.ok) {
-      const local = await localWithdraw({ userId, amount, note: `Aprobación de retiro #${id}` });
-      if (!local.ok) return res.status(local.status).json(local.data);
+      const local = await localWithdraw({
+        userId,
+        amount,
+        note: `Aprobación de retiro #${id}`,
+      });
+
+      if (!local.ok) {
+        return res.status(local.status).json(local.data);
+      }
     } else if (remote.headers) {
       relaySetCookies(remote.headers, res);
     }
 
     w.status = "approved";
     w.updatedAt = new Date();
+
     await w.save();
 
-    io.emit("admin:withdraw-response", { userId, status: "approved", id });
+    io.emit("admin:withdraw-response", {
+      userId,
+      status: "approved",
+      id,
+    });
+
     io.emit(`withdraw:${userId}`, "approved");
 
-    return res.json({ ok: true, msg: "Retiro aprobado" });
+    return res.json({
+      ok: true,
+      msg: "Retiro aprobado",
+    });
   } catch (err) {
     console.error("POST withdraw/approve error:", err);
-    return res.status(500).json({ ok: false, msg: "Error aprobando retiro" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error aprobando retiro",
+    });
   }
 });
 
 app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
   try {
     const { id } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "id requerido",
+      });
+    }
 
     const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
+
+    if (!w) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
 
     w.status = "rejected";
     w.updatedAt = new Date();
+
     await w.save();
 
-    io.emit("admin:withdraw-response", { userId: w.userId, status: "rejected", id });
+    io.emit("admin:withdraw-response", {
+      userId: w.userId,
+      status: "rejected",
+      id,
+    });
+
     io.emit(`withdraw:${w.userId}`, "rejected");
 
-    return res.json({ ok: true, msg: "Retiro rechazado" });
+    return res.json({
+      ok: true,
+      msg: "Retiro rechazado",
+    });
   } catch (err) {
     console.error("POST withdraw/reject error:", err);
-    return res.status(500).json({ ok: false, msg: "Error rechazando retiro" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error rechazando retiro",
+    });
   }
 });
-
 
 app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
   try {
@@ -1639,7 +1838,11 @@ app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("/api/admin/withdraws error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo retiros",
+    });
   }
 });
 
@@ -1664,7 +1867,11 @@ app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("/api/admin/documents error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo documentos",
+    });
   }
 });
 
@@ -1685,295 +1892,10 @@ app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
     });
   } catch (err) {
     console.error("/api/admin/documents/:userId error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos del usuario" });
-  }
-});
 
-
-
-
-
-
-
-
-/* ======================================================
-   UPDATE LEVERAGE
-====================================================== */
-app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, leverage } = req.body || {};
-    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
-      return res.status(400).json({ msg: "Datos incompletos" });
-    }
-
-    const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(userId, account, null, null);
-
-    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
-  } catch (err) {
-    console.error("/api/admin/update-leverage error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
-  try {
-    const { leverage } = req.body || {};
-    const user = await User.findById(req.params.id).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(String(user._id), account, null, null);
-
-    return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet });
-  } catch (err) {
-    console.error("PUT /admin/users/leverage/:id error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-/* ======================================================
-   UPDATE BALANCE
-====================================================== */
-app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, balance, leverage, note } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
-
-    const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
-    if (result?.headers) relaySetCookies(result.headers, res);
-
-    if (result && result.ok) return res.status(result.status).json(result.data);
-    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
-  } catch (err) {
-    console.error("/api/admin/update-balance error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
-  }
-});
-
-/* ======================================================
-   DEPOSIT / WITHDRAW
-====================================================== */
-app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, leverage, note, currency } = req.body || {};
-    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/deposit", {
-      method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Admin deposit",
-        currency: currency || "USD",
-      },
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo documentos del usuario",
     });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localDeposit({
-      userId,
-      amount: numericAmount,
-      leverage: leverage !== undefined ? Number(leverage) : undefined,
-      note: note || "Admin deposit",
-      currency: currency || "USD",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/deposit error:", err);
-    return res.status(500).json({ ok: false, msg: "Error depósito" });
   }
-});
-
-app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, note } = req.body || {};
-    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: { userId, amount: numericAmount, note: note || "Admin withdrawal" },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-      io.emit(`withdraw:${userId}`, "approved");
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localWithdraw({
-      userId,
-      amount: numericAmount,
-      note: note || "Admin withdrawal",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/withdraw error:", err);
-    return res.status(500).json({ ok: false, msg: "Error retiro" });
-  }
-});
-
-/* ======================================================
-   ROOT / HEALTH
-====================================================== */
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "admin.html"));
-});
-
-app.get("/healthz", (req, res) => {
-  res.json({
-    ok: true,
-    env: process.env.NODE_ENV || "development",
-    dbReadyState: mongoose.connection.readyState,
-    coreConfigured: !!CORE_API_URL,
-    adminApiKeyConfigured: !!ADMIN_API_KEY,
-    adminEmailConfigured: !!ADMIN_EMAIL,
-    adminTokenSecretConfigured: !!JWT_SECRET,
-    mongoConfigured: !!process.env.MONGO_URI,
-    zohoConfigured: zohoReady(),
-  });
-});
-
-/* ======================================================
-   FALLBACKS
-====================================================== */
-app.use("/api", (req, res) => {
-  res.status(404).json({ ok: false, msg: "API endpoint not found" });
-});
-
-app.use((err, req, res, next) => {
-  console.error("Unhandled error (admin):", err);
-  res.status(err.status || 500).json({
-    ok: false,
-    msg: "Error servidor",
-    detail: process.env.NODE_ENV === "development" ? err.message || String(err) : undefined,
-  });
-});
-
-/* ======================================================
-   START SERVER
-====================================================== */
-const PORT = Number(process.env.PORT || 4000);
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🔥 ADMIN RUNNING EN: ${PORT}`);
-  console.log("ENV:");
-  console.log("  CORE_API_URL:", CORE_API_URL || "(none)");
-  console.log("  ADMIN_API_KEY:", !!ADMIN_API_KEY);
-  console.log("  ADMIN_EMAIL:", !!ADMIN_EMAIL);
-  console.log("  JWT_SECRET:", !!JWT_SECRET);
-  console.log("  MONGO:", !!process.env.MONGO_URI);
-  console.log("  ZOHO:", zohoReady());
-});
-
-/* ======================================================
-   GRACEFUL SHUTDOWN
-====================================================== */
-let shuttingDown = false;
-
-const gracefulShutdown = async (signal) => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`📴 ${signal} recibido. Cerrando servidor admin...`);
-
-  const force = setTimeout(() => {
-    console.warn("Forzando cierre admin...");
-    process.exit(1);
-  }, 30_000);
-  force.unref();
-
-  try {
-    await new Promise((resolve, reject) => {
-      server.close((err) => {
-        if (err) return reject(err);
-        resolve();
-      });
-    });
-
-    try {
-      io.emit("server:shutdown");
-      await new Promise((resolve) => io.close(resolve));
-    } catch {}
-
-    try {
-      await mongoose.disconnect();
-    } catch {}
-
-    clearTimeout(force);
-    process.exit(0);
-  } catch (err) {
-    console.error("Error durante shutdown admin:", err);
-    clearTimeout(force);
-    process.exit(1);
-  }
-};
-
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("unhandledRejection", (r) => {
-  console.error("UnhandledRejection (admin):", r);
-  gracefulShutdown("unhandledRejection");
-});
-process.on("uncaughtException", (e) => {
-  console.error("UncaughtException (admin):", e);
-  gracefulShutdown("uncaughtException");
 });
