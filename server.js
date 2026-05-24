@@ -60,6 +60,7 @@ Promise.resolve(connectDB()).catch((err) => {
 
 mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
+  startAdminRealtimeFeed();
 });
 mongoose.connection.on("error", (err) => {
   console.error("❌ Mongo connection error:", err);
@@ -167,6 +168,22 @@ const withdrawSchema = new mongoose.Schema(
   },
   { minimize: false, strict: false }
 );
+const documentSchema = new mongoose.Schema(
+  {
+    userId: { type: String, index: true },
+    type: { type: String, default: "identity" },
+    documentUrl: { type: String, default: "" },
+    fileName: { type: String, default: "" },
+    mimeType: { type: String, default: "" },
+    status: { type: String, default: "pending", index: true },
+    adminNote: { type: String, default: "" },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { minimize: false, strict: false }
+);
+
+const Document = mongoose.models.Document || mongoose.model("Document", documentSchema);
 
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Wallet = mongoose.models.Wallet || mongoose.model("Wallet", walletSchema);
@@ -234,6 +251,48 @@ app.use((req, res, next) => {
   next();
 });
 
+  socket.on("request_withdraws", async (filters = {}) => {
+    try {
+      const withdraws = await loadWithdraws({
+        userId: filters.userId || null,
+        status: filters.status || "pending",
+        limit: Math.min(Number(filters.limit || 100) || 100, 500),
+      });
+
+      socket.emit("withdraws_snapshot", {
+        ok: true,
+        count: withdraws.length,
+        withdraws,
+      });
+    } catch (err) {
+      socket.emit("withdraws_snapshot", {
+        ok: false,
+        error: err?.message || "error",
+      });
+    }
+  });
+
+  socket.on("request_documents", async (filters = {}) => {
+    try {
+      const documents = await loadDocuments({
+        userId: filters.userId || null,
+        status: filters.status || "pending",
+        limit: Math.min(Number(filters.limit || 100) || 100, 500),
+      });
+
+      socket.emit("documents_snapshot", {
+        ok: true,
+        count: documents.length,
+        documents,
+      });
+    } catch (err) {
+      socket.emit("documents_snapshot", {
+        ok: false,
+        error: err?.message || "error",
+      });
+    }
+  });
+
 /* ======================================================
    HELPERS
 ====================================================== */
@@ -247,6 +306,27 @@ function getCookie(req, name) {
     if (k === name) return v;
   }
   return null;
+}
+
+
+async function openUser(userId) {
+
+  // DETENER TIMER ANTERIOR
+  if (adminRealtimeTimer) {
+    clearInterval(adminRealtimeTimer);
+    adminRealtimeTimer = null;
+  }
+
+  currentAdminUserId = userId;
+
+  await loadDocuments(userId);
+  await loadWithdraws(userId);
+
+  // NUEVO TIMER
+  adminRealtimeTimer = setInterval(async () => {
+    await loadDocuments(userId);
+    await loadWithdraws(userId);
+  }, 5000);
 }
 
 function normalizeNumber(value, fallback = 0) {
@@ -446,6 +526,115 @@ function emitStateUpdates(userId, accountPayload = null, positions = null, trans
   }
 }
 
+const ADMIN_REALTIME_SEED_LIMIT = Number(process.env.ADMIN_REALTIME_SEED_LIMIT || 200);
+const ADMIN_REALTIME_POLL_MS = Number(process.env.ADMIN_REALTIME_POLL_MS || 5000);
+
+let adminRealtimeStarted = false;
+let adminRealtimeTimer = null;
+const seenWithdrawIds = new Set();
+const seenDocumentIds = new Set();
+
+function trimSeenSet(set, maxSize = 1000) {
+  if (set.size <= maxSize) return;
+  const arr = Array.from(set);
+  const removeCount = set.size - maxSize;
+  for (let i = 0; i < removeCount; i++) {
+    set.delete(arr[i]);
+  }
+}
+
+async function loadWithdraws({ userId = null, status = null, limit = 100 } = {}) {
+  const query = {};
+  if (userId) query.userId = String(userId);
+  if (status && status !== "all") query.status = String(status);
+  return await Withdraw.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
+}
+
+async function loadDocuments({ userId = null, status = null, limit = 100 } = {}) {
+  const query = {};
+  if (userId) query.userId = String(userId);
+  if (status && status !== "all") query.status = String(status);
+  return await Document.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
+}
+
+async function seedAdminRealtimeCache() {
+  const [withdraws, documents] = await Promise.all([
+    Withdraw.find({}).sort({ createdAt: -1 }).limit(ADMIN_REALTIME_SEED_LIMIT).lean().exec().catch(() => []),
+    Document.find({}).sort({ createdAt: -1 }).limit(ADMIN_REALTIME_SEED_LIMIT).lean().exec().catch(() => []),
+  ]);
+
+  for (const w of withdraws) {
+    if (w?._id) seenWithdrawIds.add(String(w._id));
+  }
+
+  for (const d of documents) {
+    if (d?._id) seenDocumentIds.add(String(d._id));
+  }
+
+  trimSeenSet(seenWithdrawIds);
+  trimSeenSet(seenDocumentIds);
+}
+
+async function broadcastNewAdminItems() {
+  const [withdraws, documents] = await Promise.all([
+    Withdraw.find({}).sort({ createdAt: -1 }).limit(50).lean().exec().catch(() => []),
+    Document.find({}).sort({ createdAt: -1 }).limit(50).lean().exec().catch(() => []),
+  ]);
+
+  for (const w of [...withdraws].reverse()) {
+    const id = String(w?._id || "");
+    if (!id || seenWithdrawIds.has(id)) continue;
+    seenWithdrawIds.add(id);
+
+    io.emit("withdraw:new", { withdraw: w });
+    io.emit("admin:withdraw:new", { withdraw: w });
+
+    if (w.userId) {
+      io.emit(`withdraw:${w.userId}`, { withdraw: w });
+    }
+  }
+
+  for (const d of [...documents].reverse()) {
+    const id = String(d?._id || "");
+    if (!id || seenDocumentIds.has(id)) continue;
+    seenDocumentIds.add(id);
+
+    io.emit("document:new", { document: d });
+    io.emit("admin:document:new", { document: d });
+
+    if (d.userId) {
+      io.emit(`document:${d.userId}`, { document: d });
+    }
+  }
+
+  trimSeenSet(seenWithdrawIds);
+  trimSeenSet(seenDocumentIds);
+}
+
+function startAdminRealtimeFeed() {
+  if (adminRealtimeStarted) return;
+  adminRealtimeStarted = true;
+
+  seedAdminRealtimeCache()
+    .then(() => {
+      broadcastNewAdminItems().catch(() => {});
+      adminRealtimeTimer = setInterval(() => {
+        broadcastNewAdminItems().catch((err) => {
+          console.warn("admin realtime poll error:", err?.message || err);
+        });
+      }, ADMIN_REALTIME_POLL_MS);
+
+      if (adminRealtimeTimer && typeof adminRealtimeTimer.unref === "function") {
+        adminRealtimeTimer.unref();
+      }
+
+      console.log("✅ Realtime admin de retiros/documentos iniciado");
+    })
+    .catch((err) => {
+      console.warn("No se pudo iniciar cache realtime admin:", err?.message || err);
+    });
+}
+
 function signAdminToken(payload = {}) {
   return jwt.sign(
     {
@@ -516,6 +705,8 @@ async function loadWithdrawsForUser(userId, status = "pending") {
   if (status) query.status = status;
   return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []);
 }
+
+
 
 async function recordTransaction({
   user,
@@ -1401,6 +1592,85 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
     return res.status(500).json({ ok: false, msg: "Error rechazando retiro" });
   }
 });
+
+
+app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const status = req.query.status || "pending";
+    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
+
+    const withdraws = await loadWithdraws({
+      userId,
+      status,
+      limit,
+    });
+
+    return res.json({
+      ok: true,
+      count: withdraws.length,
+      withdraws,
+      data: withdraws,
+      items: withdraws,
+    });
+  } catch (err) {
+    console.error("/api/admin/withdraws error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
+  }
+});
+
+app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
+  try {
+    const userId = req.query.userId || null;
+    const status = req.query.status || "pending";
+    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
+
+    const documents = await loadDocuments({
+      userId,
+      status,
+      limit,
+    });
+
+    return res.json({
+      ok: true,
+      count: documents.length,
+      documents,
+      data: documents,
+      items: documents,
+    });
+  } catch (err) {
+    console.error("/api/admin/documents error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos" });
+  }
+});
+
+app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
+  try {
+    const documents = await loadDocuments({
+      userId: req.params.userId,
+      status: req.query.status || "all",
+      limit: Math.min(Number(req.query.limit || 100) || 100, 500),
+    });
+
+    return res.json({
+      ok: true,
+      count: documents.length,
+      documents,
+      data: documents,
+      items: documents,
+    });
+  } catch (err) {
+    console.error("/api/admin/documents/:userId error:", err);
+    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos del usuario" });
+  }
+});
+
+
+
+
+
+
+
 
 /* ======================================================
    UPDATE LEVERAGE
