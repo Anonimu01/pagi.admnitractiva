@@ -27,7 +27,6 @@
 }
 
 *{ box-sizing:border-box; }
-
 html,body{
   margin:0;
   padding:0;
@@ -36,12 +35,11 @@ html,body{
   background:var(--bg);
   color:var(--text);
 }
+body{ overflow:hidden; }
 
-body{
-  overflow:hidden;
-}
+a{ color:var(--gold); text-decoration:none; }
+a:hover{ text-decoration:underline; }
 
-/* HEADER */
 header{
   height:64px;
   padding:0 16px;
@@ -55,14 +53,7 @@ header{
   top:0;
   z-index:100;
 }
-
-.header-left{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  min-width:0;
-}
-
+.header-left{ display:flex; align-items:center; gap:12px; min-width:0; }
 .brand{
   font-size:18px;
   font-weight:900;
@@ -71,7 +62,6 @@ header{
   overflow:hidden;
   text-overflow:ellipsis;
 }
-
 .menu-btn{
   display:none;
   background:#1a1a1a;
@@ -82,7 +72,6 @@ header{
   cursor:pointer;
   font-weight:800;
 }
-
 .logout{
   background:var(--danger);
   border:none;
@@ -92,23 +81,18 @@ header{
   cursor:pointer;
   font-weight:800;
 }
-
-/* LAYOUT */
 .layout{
   display:grid;
   grid-template-columns:300px 1fr;
   height:calc(100vh - 64px);
   min-height:0;
 }
-
-/* SIDEBAR */
 .sidebar{
   border-right:1px solid var(--border);
   overflow:auto;
   background:#0d0d0d;
   min-height:0;
 }
-
 .sidebar-top{
   position:sticky;
   top:0;
@@ -117,7 +101,6 @@ header{
   border-bottom:1px solid var(--border);
   padding:14px;
 }
-
 .search{
   width:100%;
   background:#151515;
@@ -127,29 +110,15 @@ header{
   border-radius:12px;
   outline:none;
 }
-
-.users-wrap{
-  padding:0;
-}
-
+.users-wrap{ padding:0; }
 .user-item{
   padding:14px 14px;
   cursor:pointer;
   border-bottom:1px solid #191919;
   transition:.18s ease;
 }
-
-.user-item:hover{
-  background:#151515;
-}
-
-.user-name{
-  font-size:14px;
-  font-weight:800;
-  margin-bottom:4px;
-  word-break:break-word;
-}
-
+.user-item:hover{ background:#151515; }
+.user-name{ font-size:14px; font-weight:800; margin-bottom:4px; word-break:break-word; }
 .user-meta{
   display:flex;
   justify-content:space-between;
@@ -158,33 +127,14 @@ header{
   color:var(--muted);
   flex-wrap:wrap;
 }
-
-.user-email{
-  font-size:12px;
-  color:#bdbdbd;
-  word-break:break-word;
-}
-
-/* MAIN */
-.main{
-  padding:18px;
-  overflow:auto;
-  min-width:0;
-  min-height:0;
-}
-
-.page-shell{
-  display:flex;
-  flex-direction:column;
-  gap:18px;
-}
-
+.user-email{ font-size:12px; color:#bdbdbd; word-break:break-word; }
+.main{ padding:18px; overflow:auto; min-width:0; min-height:0; }
+.page-shell{ display:flex; flex-direction:column; gap:18px; }
 .grid{
   display:grid;
   grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
   gap:16px;
 }
-
 .card{
   background:var(--panel);
   border:1px solid var(--border);
@@ -192,14 +142,12 @@ header{
   box-shadow:var(--shadow);
   padding:18px;
 }
-
 .card-title{
   font-size:15px;
   font-weight:900;
   color:var(--gold);
   margin-bottom:14px;
 }
-
 .profile-head{
   display:flex;
   justify-content:space-between;
@@ -207,19 +155,13 @@ header{
   align-items:flex-start;
   flex-wrap:wrap;
 }
-
 .profile-head h2{
   margin:0 0 8px 0;
   font-size:22px;
   line-height:1.2;
   word-break:break-word;
 }
-
-.small{
-  font-size:12px;
-  color:var(--muted);
-}
-
+.small{ font-size:12px; color:var(--muted); }
 .balance-box{
   font-size:32px;
   font-weight:900;
@@ -227,19 +169,8 @@ header{
   line-height:1;
   text-align:right;
 }
-
-.balance-label{
-  font-size:12px;
-  color:var(--muted);
-  text-align:right;
-  margin-top:4px;
-}
-
-.info-list{
-  display:grid;
-  gap:10px;
-}
-
+.balance-label{ font-size:12px; color:var(--muted); text-align:right; margin-top:4px; }
+.info-list{ display:grid; gap:10px; }
 .info-row{
   display:flex;
   justify-content:space-between;
@@ -250,29 +181,10 @@ header{
   border:1px solid #202020;
   border-radius:12px;
 }
-
-.info-label{
-  color:#a3a3a3;
-}
-
-.info-value{
-  color:#fff;
-  word-break:break-word;
-  text-align:right;
-}
-
-/* FORM */
-.form-group{
-  margin-bottom:14px;
-}
-
-label{
-  display:block;
-  margin-bottom:8px;
-  color:#aaa;
-  font-size:13px;
-}
-
+.info-label{ color:#a3a3a3; }
+.info-value{ color:#fff; word-break:break-word; text-align:right; }
+.form-group{ margin-bottom:14px; }
+label{ display:block; margin-bottom:8px; color:#aaa; font-size:13px; }
 input,select,button,textarea{
   width:100%;
   background:#0f0f0f;
@@ -283,77 +195,18 @@ input,select,button,textarea{
   outline:none;
   font-size:14px;
 }
-
-textarea{
-  resize:vertical;
-  min-height:90px;
-}
-
-button{
-  cursor:pointer;
-  font-weight:800;
-  transition:.18s ease;
-}
-
-button:hover{
-  transform:translateY(-1px);
-}
-
-.primary{
-  background:var(--gold);
-  color:#000;
-  border:none;
-}
-
-.danger{
-  background:var(--danger);
-  border:none;
-  color:#fff;
-}
-
-.success{
-  background:var(--success);
-  border:none;
-  color:#fff;
-}
-
-.info{
-  background:var(--info);
-  border:none;
-  color:#fff;
-}
-
-.warning{
-  background:var(--warning);
-  border:none;
-  color:#000;
-}
-
-.actions{
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  gap:10px;
-}
-
-.center{
-  text-align:center;
-  color:#777;
-  padding:34px 16px;
-}
-
-.loader{
-  text-align:center;
-  padding:26px 16px;
-  color:#888;
-}
-
-.error{
-  color:#ff6b6b;
-  text-align:center;
-  margin-top:20px;
-  padding:16px;
-}
-
+textarea{ resize:vertical; min-height:90px; }
+button{ cursor:pointer; font-weight:800; transition:.18s ease; }
+button:hover{ transform:translateY(-1px); }
+.primary{ background:var(--gold); color:#000; border:none; }
+.danger{ background:var(--danger); border:none; color:#fff; }
+.success{ background:var(--success); border:none; color:#fff; }
+.info{ background:var(--info); border:none; color:#fff; }
+.warning{ background:var(--warning); border:none; color:#000; }
+.actions{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.center{ text-align:center; color:#777; padding:34px 16px; }
+.loader{ text-align:center; padding:26px 16px; color:#888; }
+.error{ color:#ff6b6b; text-align:center; margin-top:20px; padding:16px; }
 .chart-box{
   height:430px;
   overflow:hidden;
@@ -361,20 +214,12 @@ button:hover{
   background:#101010;
   border:1px solid #202020;
 }
-
-.section-list{
-  display:flex;
-  flex-direction:column;
-  gap:12px;
-}
-
 .item{
   background:#141414;
   border:1px solid #242424;
   border-radius:12px;
   padding:14px;
 }
-
 .item-head{
   display:flex;
   align-items:flex-start;
@@ -383,18 +228,8 @@ button:hover{
   flex-wrap:wrap;
   margin-bottom:10px;
 }
-
-.item-title{
-  font-size:16px;
-  font-weight:900;
-}
-
-.item-sub{
-  color:#a3a3a3;
-  font-size:12px;
-  margin-top:4px;
-}
-
+.item-title{ font-size:16px; font-weight:900; }
+.item-sub{ color:#a3a3a3; font-size:12px; margin-top:4px; }
 .badge{
   display:inline-flex;
   align-items:center;
@@ -407,30 +242,19 @@ button:hover{
   letter-spacing:.03em;
   border:1px solid transparent;
 }
-
 .badge.pending{ background:#2b2408; color:#f3d46b; border-color:#5a4a14; }
 .badge.approved{ background:#0b2a16; color:#5ef0a0; border-color:#1e5c37; }
 .badge.rejected{ background:#2a0b0b; color:#ff8a8a; border-color:#5e1d1d; }
 .badge.counter_offer{ background:#241c0b; color:#f5c96b; border-color:#6c5216; }
 .badge.default{ background:#1b1b1b; color:#ccc; border-color:#333; }
-
 .item-actions{
   display:grid;
   grid-template-columns:repeat(2,1fr);
   gap:10px;
   margin-top:12px;
 }
-
-.item-actions.three{
-  grid-template-columns:repeat(3,1fr);
-}
-
-.detail{
-  margin-top:10px;
-  padding-top:10px;
-  border-top:1px solid #242424;
-}
-
+.item-actions.three{ grid-template-columns:repeat(3,1fr); }
+.detail{ margin-top:10px; padding-top:10px; border-top:1px solid #242424; }
 .msg{
   background:#0f0f0f;
   border:1px solid #242424;
@@ -438,34 +262,11 @@ button:hover{
   padding:10px 12px;
   margin-bottom:8px;
 }
-
-.msg.admin{
-  border-color:#5a4a14;
-}
-
-.msg.client{
-  border-color:#234b7c;
-}
-
-.msg-meta{
-  font-size:11px;
-  color:#888;
-  margin-bottom:4px;
-}
-
-.msg-text{
-  font-size:14px;
-  color:#e8e8e8;
-  white-space:pre-wrap;
-  word-break:break-word;
-}
-
-.tabs{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-}
-
+.msg.admin{ border-color:#5a4a14; }
+.msg.client{ border-color:#234b7c; }
+.msg-meta{ font-size:11px; color:#888; margin-bottom:4px; }
+.msg-text{ font-size:14px; color:#e8e8e8; white-space:pre-wrap; word-break:break-word; }
+.tabs{ display:flex; gap:10px; flex-wrap:wrap; }
 .tab-btn{
   width:auto;
   padding:10px 14px;
@@ -474,47 +275,15 @@ button:hover{
   color:#ddd;
   border:1px solid #2a2a2a;
 }
-
-.tab-btn.active{
-  background:var(--gold);
-  color:#000;
-  border-color:transparent;
-}
-
-.tab-panel{
-  display:none;
-}
-
-.tab-panel.active{
-  display:block;
-}
-
-.form-row{
-  display:grid;
-  grid-template-columns:repeat(2,1fr);
-  gap:10px;
-}
-
-/* MOBILE */
-.mobile-backdrop{
-  display:none;
-}
-
+.tab-btn.active{ background:var(--gold); color:#000; border-color:transparent; }
+.tab-panel{ display:none; }
+.tab-panel.active{ display:block; }
+.form-row{ display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+.mobile-backdrop{ display:none; }
 @media (max-width: 980px){
   body{ overflow:auto; }
-
-  .menu-btn{
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-  }
-
-  .layout{
-    grid-template-columns:1fr;
-    height:auto;
-    min-height:calc(100vh - 64px);
-  }
-
+  .menu-btn{ display:inline-flex; align-items:center; justify-content:center; }
+  .layout{ grid-template-columns:1fr; height:auto; min-height:calc(100vh - 64px); }
   .sidebar{
     position:fixed;
     top:64px;
@@ -525,11 +294,7 @@ button:hover{
     transition:left .25s ease;
     background:#0d0d0d;
   }
-
-  .sidebar.active{
-    left:0;
-  }
-
+  .sidebar.active{ left:0; }
   .mobile-backdrop{
     display:block;
     position:fixed;
@@ -540,68 +305,28 @@ button:hover{
     transition:opacity .2s ease;
     z-index:998;
   }
-
-  .mobile-backdrop.active{
-    opacity:1;
-    pointer-events:auto;
-  }
-
-  .main{
-    padding:14px;
-  }
-
-  .grid{
-    grid-template-columns:1fr;
-  }
-
-  .chart-box{
-    height:360px;
-  }
-
+  .mobile-backdrop.active{ opacity:1; pointer-events:auto; }
+  .main{ padding:14px; }
+  .grid{ grid-template-columns:1fr; }
+  .chart-box{ height:360px; }
   .actions,
   .item-actions,
   .item-actions.three,
-  .form-row{
-    grid-template-columns:1fr;
-  }
-
+  .form-row{ grid-template-columns:1fr; }
   .balance-box,
-  .balance-label{
-    text-align:left;
-  }
+  .balance-label{ text-align:left; }
 }
-
 @media (max-width: 520px){
-  header{
-    padding:0 12px;
-  }
-
-  .brand{
-    font-size:16px;
-  }
-
-  .logout{
-    padding:9px 12px;
-  }
-
-  .main{
-    padding:12px;
-  }
-
-  .card{
-    padding:14px;
-    border-radius:12px;
-  }
-
-  .chart-box{
-    height:320px;
-  }
+  header{ padding:0 12px; }
+  .brand{ font-size:16px; }
+  .logout{ padding:9px 12px; }
+  .main{ padding:12px; }
+  .card{ padding:14px; border-radius:12px; }
+  .chart-box{ height:320px; }
 }
 </style>
 </head>
-
 <body>
-
 <header>
   <div class="header-left">
     <button class="menu-btn" onclick="toggleSidebar()">☰</button>
@@ -613,7 +338,6 @@ button:hover{
 <div class="mobile-backdrop" id="backdrop" onclick="closeSidebar()"></div>
 
 <div class="layout">
-
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-top">
       <input
@@ -633,19 +357,13 @@ button:hover{
   <main class="main" id="profilePanel">
     <div class="center">Selecciona un usuario</div>
   </main>
-
 </div>
 
 <script>
-/* ================= API ================= */
 const API = `${location.origin}/api`;
-
-/* ================= TOKEN ================= */
 const token = localStorage.getItem("admin_token") || localStorage.getItem("token");
 
-if (!token) {
-  location.href = "login.html";
-}
+if (!token) location.href = "login.html";
 
 function authHeaders(extra = {}) {
   return {
@@ -654,7 +372,6 @@ function authHeaders(extra = {}) {
   };
 }
 
-/* ================= STATE ================= */
 let currentUser = null;
 let currentWithdraw = null;
 let currentDocument = null;
@@ -664,86 +381,59 @@ let allWithdraws = [];
 let allDocuments = [];
 let socket = null;
 
-/* ================= SIDEBAR MOBILE ================= */
 function toggleSidebar() {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("backdrop");
   sidebar.classList.toggle("active");
   backdrop.classList.toggle("active");
 }
-
 function closeSidebar() {
   document.getElementById("sidebar").classList.remove("active");
   document.getElementById("backdrop").classList.remove("active");
 }
-
 window.addEventListener("resize", () => {
-  if (window.innerWidth > 980) {
-    closeSidebar();
-  }
+  if (window.innerWidth > 980) closeSidebar();
 });
 
-/* ================= HELPERS ================= */
 function escapeHtml(s) {
-  return String(s || "").replace(/[&<>"']/g, function(m) {
-    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m];
+  return String(s ?? "").replace(/[&<>"]'/g, function(m) {
+    return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[m];
   });
 }
-
 function formatDate(value) {
   if (!value) return "—";
   const d = new Date(value);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
-
 function formatMoney(value) {
-  const n = Number(value || 0);
+  const n = Number(value ?? 0);
   return n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 }
-
 function statusClass(status) {
   return String(status || "default").toLowerCase().replace(/\s+/g, "_");
 }
-
-function getUserId(u) {
-  return u?._id || u?.id || "";
-}
-
-function getUserEmail(u) {
-  return u?.email || u?.emailAddress || u?.correo || "sin-email";
-}
-
-function getUserName(u) {
-  return u?.nombre || u?.name || u?.fullName || u?.firstName || "";
-}
-
-function getUserPhone(u) {
-  return u?.telefono || u?.phone || u?.mobile || "";
-}
-
-function getUserAddress(u) {
-  return u?.direccion || u?.address || "";
-}
-
+function getUserId(u) { return u?._id || u?.id || ""; }
+function getUserEmail(u) { return u?.email || u?.emailAddress || u?.correo || u?.Correo || "sin-email"; }
+function getUserName(u) { return u?.nombre || u?.name || u?.fullName || u?.firstName || u?.Nombre || u?.nombreCompleto || ""; }
+function getUserPhone(u) { return u?.telefono || u?.phone || u?.mobile || u?.Telefono || ""; }
+function getUserAddress(u) { return u?.direccion || u?.address || u?.Direccion || ""; }
 function extractArray(resp) {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
   if (Array.isArray(resp.data)) return resp.data;
   if (Array.isArray(resp.withdraws)) return resp.withdraws;
+  if (Array.isArray(resp.withdrawals)) return resp.withdrawals;
   if (Array.isArray(resp.documents)) return resp.documents;
   if (Array.isArray(resp.users)) return resp.users;
   if (Array.isArray(resp.result)) return resp.result;
   return [];
 }
-
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== "") return value;
   }
   return undefined;
 }
-
 function normalizeStatusLabel(value) {
   const s = String(value || "pending").trim().toLowerCase();
   if (["pendiente", "pending"].includes(s)) return "pending";
@@ -752,40 +442,37 @@ function normalizeStatusLabel(value) {
   if (["counter_offer", "counter offer", "contraoferta"].includes(s)) return "counter_offer";
   return s.replace(/\s+/g, "_") || "pending";
 }
-
 function getOwnerUserId(record = {}) {
-  return String(firstDefined(record.userId, record.user, record.usuario, record.ownerId, record.clientId, record.client, ""));
+  return String(firstDefined(record.userId, record.user, record.usuario, record.ownerId, record.clientId, record.client, record.uid, ""));
 }
-
 function normalizeWithdrawItem(w = {}) {
-  const status = normalizeStatusLabel(firstDefined(w.status, w.Estado, w.estado, "pending"));
+  const status = normalizeStatusLabel(firstDefined(w.status, w.Estado, w.estado, w.Status, "pending"));
   const amount = Number(firstDefined(w.amount, w.Amount, w.cantidad, w.Cantidad, 0)) || 0;
-
   return {
     ...w,
     status,
     amount,
-    method: String(firstDefined(w.method, w.metodo, w.Metodo, "N/A")),
+    method: String(firstDefined(w.method, w.metodo, w.Metodo, w.paymentMethod, "N/A")),
     walletAddress: String(firstDefined(w.walletAddress, w.wallet, w.direccionWallet, w.proofUrl, "—")),
     bankName: String(firstDefined(w.bankName, w.banco, "—")),
     accountNumber: String(firstDefined(w.accountNumber, w.account, w.cuenta, w.Cuenta, "—")),
-    note: String(firstDefined(w.note, w.Nota, "")),
-    adminNote: String(firstDefined(w.adminNote, w.adminnote, "")),
+    note: String(firstDefined(w.note, w.Nota, w.message, "")),
+    adminNote: String(firstDefined(w.adminNote, w.adminnote, w.admin_note, "")),
     processedBy: String(firstDefined(w.processedBy, w.procesadoPor, "")),
     processedAt: firstDefined(w.processedAt, w.procesadoAt, null),
     createdAt: firstDefined(w.createdAt, w.created_at, null),
     messages: Array.isArray(w.messages) ? w.messages : [],
+    offerAmount: Number(firstDefined(w.offerAmount, w.counterOffer, w.oferta, 0)) || 0,
+    proofUrl: String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, ""))
   };
 }
-
 function normalizeDocumentItem(doc = {}) {
-  const status = normalizeStatusLabel(firstDefined(doc.status, doc.Estado, doc.estado, "pending"));
-  const type = String(firstDefined(doc.type, doc.tipo, doc.documentType, "documento"));
+  const status = normalizeStatusLabel(firstDefined(doc.status, doc.Estado, doc.estado, doc.Status, "pending"));
+  const type = String(firstDefined(doc.type, doc.Tipo, doc.tipo, doc.documentType, doc.DocumentType, "documento"));
   const fileUrl = String(firstDefined(doc.fileUrl, doc.documentUrl, doc.url, doc.path, doc.archivo, doc.ruta, doc.proofUrl, ""));
   const fileName = String(firstDefined(doc.originalName, doc.filename, doc.nombre, doc.fileName, doc.name, "archivo"));
   const mimeType = String(firstDefined(doc.mimeType, doc.mime, "—"));
-  const size = Number(firstDefined(doc.size, doc.fileSize, 0)) || 0;
-
+  const size = Number(firstDefined(doc.size, doc.fileSize, doc.tamaño, 0)) || 0;
   return {
     ...doc,
     status,
@@ -795,88 +482,50 @@ function normalizeDocumentItem(doc = {}) {
     mimeType,
     size,
     createdAt: firstDefined(doc.createdAt, doc.created_at, null),
+    updatedAt: firstDefined(doc.updatedAt, doc.actualizadoAt, doc.updated_at, null),
+    adminNote: String(firstDefined(doc.adminNote, doc.adminnote, doc.notaAdmin, ""))
   };
 }
-
-function renderWithdrawDetail(withdraw) {
-  return openWithdrawDetail(withdraw);
-}
-
-function renderDocumentDetail(doc) {
-  return openDocumentDetail(doc);
-}
-
 function setTab(tabName) {
-  const tabs = document.querySelectorAll(".tab-btn");
-  const panels = document.querySelectorAll(".tab-panel");
-  tabs.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
-  panels.forEach(p => p.classList.toggle("active", p.id === tabName));
+  document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === tabName));
 }
-
 async function apiFetch(url, options = {}) {
-  try {
-    const opt = {
-      ...options,
-      headers: authHeaders(options.headers || {})
-    };
-
-    if (options.body instanceof FormData) {
-      delete opt.headers["Content-Type"];
-    } else {
-      opt.headers["Content-Type"] = opt.headers["Content-Type"] || "application/json";
-    }
-
-    const res = await fetch(url, opt);
-
-    if (res.status === 401) {
-      logout();
-      return null;
-    }
-
-    if (res.status === 204) return {};
-
-    let data;
-    const ct = res.headers.get("content-type") || "";
-    try {
-      if (ct.includes("application/json")) data = await res.json();
-      else data = await res.text();
-    } catch {
-      data = null;
-    }
-
-    if (!res.ok) {
-      throw new Error(
-        typeof data === "string"
-          ? data
-          : (data?.msg || data?.message || res.statusText || "Error")
-      );
-    }
-
-    return data;
-  } catch (e) {
-    console.error("API error:", e);
-    throw e;
+  const opt = { ...options, headers: authHeaders(options.headers || {}) };
+  if (options.body instanceof FormData) {
+    delete opt.headers["Content-Type"];
+  } else {
+    opt.headers["Content-Type"] = opt.headers["Content-Type"] || "application/json";
   }
+  const res = await fetch(url, opt);
+  if (res.status === 401) {
+    logout();
+    return null;
+  }
+  if (res.status === 204) return {};
+  const ct = res.headers.get("content-type") || "";
+  let data = null;
+  try {
+    data = ct.includes("application/json") ? await res.json() : await res.text();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    throw new Error(typeof data === "string" ? data : (data?.msg || data?.message || res.statusText || "Error"));
+  }
+  return data;
 }
+function toast(message) { alert(message); }
 
-function toast(message) {
-  alert(message);
-}
-
-/* ================= SOCKETS ================= */
 function connectSocket() {
   try {
-    socket = io({
-      transports: ["websocket", "polling"],
-      query: { role: "admin" }
-    });
+    socket = io({ transports: ["websocket", "polling"], query: { role: "admin" } });
 
     socket.on("connect", () => {
       console.log("socket connected", socket.id);
       socket.emit("join_admin_room");
       socket.emit("request_withdraws", { status: "all" });
       socket.emit("request_documents", { status: "all" });
-
       if (currentUser) {
         const userId = getUserId(currentUser);
         socket.emit("request_withdraws", { userId, status: "all" });
@@ -885,16 +534,11 @@ function connectSocket() {
     });
 
     const refreshWithdrawsForCurrent = () => {
-      if (currentUser) {
-        loadWithdraws(getUserId(currentUser), true);
-      }
+      if (currentUser) loadWithdraws(getUserId(currentUser), true);
       loadAllWithdraws(false);
     };
-
     const refreshDocumentsForCurrent = () => {
-      if (currentUser) {
-        loadDocuments(getUserId(currentUser), true);
-      }
+      if (currentUser) loadDocuments(getUserId(currentUser), true);
     };
 
     socket.on("withdraw:new", refreshWithdrawsForCurrent);
@@ -903,7 +547,7 @@ function connectSocket() {
       const normalized = normalizeWithdrawItem(withdraw || {});
       if (currentWithdraw && String(currentWithdraw._id) === String(normalized._id)) {
         currentWithdraw = normalized;
-        renderWithdrawDetail(normalized);
+        openWithdrawDetail(normalized);
       }
       refreshWithdrawsForCurrent();
     });
@@ -912,7 +556,7 @@ function connectSocket() {
       const normalized = normalizeWithdrawItem(withdraw || {});
       if (currentWithdraw && String(currentWithdraw._id) === String(normalized._id)) {
         currentWithdraw = normalized;
-        renderWithdrawDetail(normalized);
+        openWithdrawDetail(normalized);
       }
       refreshWithdrawsForCurrent();
     });
@@ -922,20 +566,14 @@ function connectSocket() {
     socket.on("document:uploaded", refreshDocumentsForCurrent);
     socket.on("document:approved", refreshDocumentsForCurrent);
     socket.on("document:rejected", refreshDocumentsForCurrent);
-
-    socket.on("disconnect", () => {
-      console.log("socket disconnected");
-    });
   } catch (e) {
     console.warn("socket init failed:", e);
   }
 }
 
-/* ================= USERS ================= */
 async function loadUsers() {
   const list = document.getElementById("usersList");
   list.innerHTML = `<div class="loader">Cargando...</div>`;
-
   try {
     const resp = await apiFetch(API + "/admin/users");
     allUsers = extractArray(resp);
@@ -944,23 +582,19 @@ async function loadUsers() {
     list.innerHTML = `<div class="error">Error cargando usuarios</div>`;
   }
 }
-
 function renderUsers(users) {
   const list = document.getElementById("usersList");
   list.innerHTML = "";
-
   if (!users.length) {
     list.innerHTML = `<div class="center">No hay usuarios</div>`;
     return;
   }
-
   users.forEach(u => {
     const email = getUserEmail(u);
     const name = getUserName(u);
     const bal = typeof u.balance !== "undefined" ? u.balance : 0;
     const item = document.createElement("div");
     item.className = "user-item";
-
     item.innerHTML = `
       <div class="user-name">${escapeHtml(name || email)}</div>
       <div class="user-email">${escapeHtml(email)}</div>
@@ -969,41 +603,26 @@ function renderUsers(users) {
         <span>x${escapeHtml(String(typeof u.leverage !== "undefined" ? u.leverage : 1))}</span>
       </div>
     `;
-
     item.onclick = () => {
       openUser(u);
       if (window.innerWidth <= 980) closeSidebar();
     };
-
     list.appendChild(item);
   });
 }
-
 function filterUsers(text) {
   const t = String(text || "").toLowerCase().trim();
-  if (!t) {
-    renderUsers(allUsers);
-    return;
-  }
-
+  if (!t) return renderUsers(allUsers);
   const filtered = allUsers.filter(u => {
     const values = [
-      getUserName(u),
-      getUserEmail(u),
-      getUserPhone(u),
-      getUserAddress(u),
-      String(u.balance ?? ""),
-      String(u.leverage ?? ""),
-      String(u.role ?? ""),
+      getUserName(u), getUserEmail(u), getUserPhone(u), getUserAddress(u),
+      String(u.balance ?? ""), String(u.leverage ?? ""), String(u.role ?? "")
     ].join(" ").toLowerCase();
-
     return values.includes(t);
   });
-
   renderUsers(filtered);
 }
 
-/* ================= OPEN USER ================= */
 function openUser(u) {
   currentUser = u;
   currentWithdraw = null;
@@ -1020,7 +639,6 @@ function openUser(u) {
 
   document.getElementById("profilePanel").innerHTML = `
     <div class="page-shell">
-
       <div class="card">
         <div class="profile-head">
           <div>
@@ -1028,7 +646,6 @@ function openUser(u) {
             <div class="small">Correo: ${escapeHtml(userEmail)}</div>
             <div class="small">ID: ${escapeHtml(userId)}</div>
           </div>
-
           <div>
             <div class="balance-box">$${escapeHtml(formatMoney(userBalance))}</div>
             <div class="balance-label">Saldo actual</div>
@@ -1046,61 +663,30 @@ function openUser(u) {
         <div class="grid">
           <div class="card">
             <div class="card-title">Información del Cliente</div>
-
             <div class="info-list">
-              <div class="info-row">
-                <span class="info-label">Nombre</span>
-                <span class="info-value">${escapeHtml(userName || "N/A")}</span>
-              </div>
-
-              <div class="info-row">
-                <span class="info-label">Correo</span>
-                <span class="info-value">${escapeHtml(userEmail || "N/A")}</span>
-              </div>
-
-              <div class="info-row">
-                <span class="info-label">Teléfono</span>
-                <span class="info-value">${escapeHtml(userPhone || "N/A")}</span>
-              </div>
-
-              <div class="info-row">
-                <span class="info-label">Dirección</span>
-                <span class="info-value">${escapeHtml(userAddress || "N/A")}</span>
-              </div>
-
-              <div class="info-row">
-                <span class="info-label">Estado</span>
-                <span class="info-value">${escapeHtml(userStatus)}</span>
-              </div>
+              <div class="info-row"><span class="info-label">Nombre</span><span class="info-value">${escapeHtml(userName || "N/A")}</span></div>
+              <div class="info-row"><span class="info-label">Correo</span><span class="info-value">${escapeHtml(userEmail || "N/A")}</span></div>
+              <div class="info-row"><span class="info-label">Teléfono</span><span class="info-value">${escapeHtml(userPhone || "N/A")}</span></div>
+              <div class="info-row"><span class="info-label">Dirección</span><span class="info-value">${escapeHtml(userAddress || "N/A")}</span></div>
+              <div class="info-row"><span class="info-label">Estado</span><span class="info-value">${escapeHtml(userStatus)}</span></div>
             </div>
           </div>
 
           <div class="card">
             <div class="card-title">Actualizar Saldo</div>
-
             <div class="form-group">
               <label for="balance">Nuevo saldo</label>
               <input id="balance" type="number" step="0.01" value="${escapeHtml(String(userBalance))}" />
             </div>
-
             <button class="primary" onclick="updateBalance()">Guardar saldo</button>
           </div>
 
           <div class="card">
             <div class="card-title">Apalancamiento</div>
-
             <div class="form-group">
               <label for="leverage">Escribe una cantidad entre 50 y 100000</label>
-              <input
-                id="leverage"
-                type="number"
-                min="50"
-                max="100000"
-                step="1"
-                value="${escapeHtml(String(userLeverage))}"
-              />
+              <input id="leverage" type="number" min="50" max="100000" step="1" value="${escapeHtml(String(userLeverage))}" />
             </div>
-
             <button class="primary" onclick="updateLeverage()">Guardar apalancamiento</button>
           </div>
         </div>
@@ -1109,14 +695,11 @@ function openUser(u) {
 
         <div class="card">
           <div class="card-title">Gráfico</div>
-
           <div class="form-group">
             <label for="symbolInput">Símbolo gráfico</label>
             <input id="symbolInput" value="BINANCE:BTCUSDT" />
           </div>
-
           <button class="primary" onclick="loadChart()">Cargar gráfico</button>
-
           <div style="height:14px"></div>
           <div id="tv_chart" class="chart-box"></div>
         </div>
@@ -1153,7 +736,6 @@ function openUser(u) {
 
         <div class="card">
           <div class="card-title">Subir Documento</div>
-
           <div class="form-row">
             <div class="form-group">
               <label for="docType">Tipo</label>
@@ -1166,13 +748,11 @@ function openUser(u) {
                 <option value="other">Otro</option>
               </select>
             </div>
-
             <div class="form-group">
               <label for="docFile">Archivo</label>
               <input id="docFile" type="file" accept=".jpg,.jpeg,.png,.pdf" />
             </div>
           </div>
-
           <button class="primary" onclick="uploadDocumentForUser()">Subir documento</button>
         </div>
       </div>
@@ -1190,19 +770,13 @@ function openUser(u) {
   }
 }
 
-/* ================= TRADINGVIEW ================= */
 function loadChart() {
   const symbolEl = document.getElementById("symbolInput");
   if (!symbolEl) return;
-
   const symbol = symbolEl.value || "BINANCE:BTCUSDT";
-
   try {
-    if (tvWidget && typeof tvWidget.remove === "function") {
-      tvWidget.remove();
-    }
-  } catch (e) {}
-
+    if (tvWidget && typeof tvWidget.remove === "function") tvWidget.remove();
+  } catch {}
   try {
     tvWidget = new TradingView.widget({
       container_id: "tv_chart",
@@ -1224,126 +798,59 @@ function loadChart() {
   }
 }
 
-/* ================= UPDATE BALANCE ================= */
 async function updateBalance() {
   if (!currentUser) return;
-
   const balance = document.getElementById("balance").value;
-
   try {
     await apiFetch(API + "/admin/update-balance", {
       method: "POST",
-      body: JSON.stringify({
-        userId: getUserId(currentUser),
-        balance
-      })
+      body: JSON.stringify({ userId: getUserId(currentUser), balance })
     });
-
     await loadUsers();
     const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
     openUser(refreshed);
     toast("Saldo actualizado");
   } catch (e) {
+    console.error(e);
     toast("Error actualizando saldo");
   }
 }
 
-/* ================= UPDATE LEVERAGE ================= */
 async function updateLeverage() {
   if (!currentUser) return;
-
   const leverage = Number(document.getElementById("leverage").value);
-
   if (Number.isNaN(leverage) || leverage < 50 || leverage > 100000) {
     alert("El apalancamiento debe estar entre 50 y 100000.");
     return;
   }
-
   try {
     await apiFetch(API + "/admin/update-leverage", {
       method: "POST",
-      body: JSON.stringify({
-        userId: getUserId(currentUser),
-        leverage
-      })
+      body: JSON.stringify({ userId: getUserId(currentUser), leverage })
     });
-
     await loadUsers();
     const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
     openUser(refreshed);
     toast("Apalancamiento actualizado");
   } catch (e) {
+    console.error(e);
     toast("Error actualizando apalancamiento");
-  }
-}
-
-/* ================= WITHDRAWALS ================= */
-async function loadWithdraws(userId, render = true) {
-  if (!userId) return [];
-
-  const endpoints = [
-    API + "/admin/withdraws/" + encodeURIComponent(userId) + "?status=all",
-    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=all",
-    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=pending",
-  ];
-
-  let lastList = [];
-
-  for (const url of endpoints) {
-    try {
-      const data = await apiFetch(url);
-      const list = extractArray(data).map(normalizeWithdrawItem);
-      lastList = list;
-
-      if (list.length || Array.isArray(data)) {
-        allWithdraws = list || [];
-        if (render) renderWithdrawList(allWithdraws);
-        return allWithdraws;
-      }
-    } catch (e) {}
-  }
-
-  allWithdraws = lastList || [];
-  if (render) renderWithdrawList(allWithdraws);
-  return allWithdraws;
-}
-
-async function loadAllWithdraws(render = true) {
-  try {
-    const data = await apiFetch(API + "/admin/withdraws?status=all");
-    const list = extractArray(data).map(normalizeWithdrawItem);
-    allWithdraws = list || [];
-    if (render) {
-      if (currentUser) {
-        const uid = String(getUserId(currentUser));
-        renderWithdrawList(allWithdraws.filter(w => String(getOwnerUserId(w)) === uid));
-      } else {
-        renderWithdrawList(allWithdraws);
-      }
-    }
-    return allWithdraws;
-  } catch (e) {
-    return [];
   }
 }
 
 function renderWithdrawList(list) {
   const box = document.getElementById("withdraws");
   if (!box) return;
-
   box.innerHTML = "";
-
   if (!list || !list.length) {
     box.innerHTML = `<div class="small">Sin solicitudes</div>`;
     return;
   }
-
   list.forEach((raw) => {
     const w = normalizeWithdrawItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
-
     const badge = escapeHtml(String(w.status || "pending"));
     const method = escapeHtml(w.method || "N/A");
     const amount = escapeHtml(formatMoney(w.amount || 0));
@@ -1351,7 +858,6 @@ function renderWithdrawList(list) {
     const account = escapeHtml(w.accountNumber || "—");
     const bank = escapeHtml(w.bankName || "—");
     const wallet = escapeHtml(w.walletAddress || "—");
-
     div.innerHTML = `
       <div class="item-head">
         <div>
@@ -1360,26 +866,74 @@ function renderWithdrawList(list) {
         </div>
         <span class="badge ${statusClass(w.status)}">${badge}</span>
       </div>
-      <div class="small">
-        Wallet: ${wallet}<br/>
-        Banco: ${bank}<br/>
-        Cuenta: ${account}
-      </div>
+      <div class="small">Wallet: ${wallet}<br/>Banco: ${bank}<br/>Cuenta: ${account}</div>
     `;
-
     div.onclick = () => openWithdrawDetail(w);
     box.appendChild(div);
   });
 }
 
-async function openWithdrawDetail(withdraw) {
+async function loadWithdraws(userId, render = true) {
+  if (!userId) return [];
+  const endpoints = [
+    API + "/admin/withdraws/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=all",
+    API + "/admin/withdrawals/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/withdrawals?userId=" + encodeURIComponent(userId) + "&status=all",
+    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=pending"
+  ];
+  let lastList = [];
+  for (const url of endpoints) {
+    try {
+      const data = await apiFetch(url);
+      const list = extractArray(data).map(normalizeWithdrawItem);
+      lastList = list;
+      if (list.length || Array.isArray(data)) {
+        allWithdraws = list || [];
+        if (render) renderWithdrawList(allWithdraws);
+        return allWithdraws;
+      }
+    } catch {}
+  }
+  allWithdraws = lastList || [];
+  if (render) renderWithdrawList(allWithdraws);
+  return allWithdraws;
+}
+
+async function loadAllWithdraws(render = true) {
+  try {
+    const endpoints = [
+      API + "/admin/withdraws?status=all",
+      API + "/admin/withdrawals?status=all"
+    ];
+    for (const url of endpoints) {
+      try {
+        const data = await apiFetch(url);
+        const list = extractArray(data).map(normalizeWithdrawItem);
+        allWithdraws = list || [];
+        if (render) {
+          if (currentUser) {
+            const uid = String(getUserId(currentUser));
+            renderWithdrawList(allWithdraws.filter(w => String(getOwnerUserId(w)) === uid));
+          } else {
+            renderWithdrawList(allWithdraws);
+          }
+        }
+        return allWithdraws;
+      } catch {}
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+function openWithdrawDetail(withdraw) {
   currentWithdraw = normalizeWithdrawItem(withdraw || {});
   if (!currentWithdraw) return;
-
   const w = currentWithdraw;
   const box = document.getElementById("withdrawDetail");
   if (!box) return;
-
   const msgs = Array.isArray(w.messages) ? w.messages : [];
   const messagesHtml = msgs.length
     ? msgs.map(m => `
@@ -1389,9 +943,7 @@ async function openWithdrawDetail(withdraw) {
         </div>
       `).join("")
     : `<div class="small">No hay mensajes aún</div>`;
-
   const fileUrl = String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, ""));
-
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
@@ -1412,18 +964,16 @@ async function openWithdrawDetail(withdraw) {
       <div class="detail">
         <div class="small"><strong>Nota del cliente:</strong> ${escapeHtml(w.note || "—")}</div>
         <div class="small"><strong>Nota admin:</strong> ${escapeHtml(w.adminNote || "—")}</div>
-        <div class="small"><strong>Comprobante:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank" style="color:#d4af37;">Abrir</a>` : "—"}</div>
+        <div class="small"><strong>Comprobante:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank">Abrir</a>` : "—"}</div>
         <div class="small"><strong>Procesado por:</strong> ${escapeHtml(w.processedBy || "—")}</div>
         <div class="small"><strong>Procesado at:</strong> ${escapeHtml(formatDate(w.processedAt))}</div>
       </div>
 
       <div style="height:12px"></div>
-
       <div class="card-title" style="margin-bottom:10px;">Mensajes</div>
       <div>${messagesHtml}</div>
 
       <div style="height:12px"></div>
-
       <div class="form-group">
         <label for="withdrawMessage">Nuevo mensaje admin</label>
         <textarea id="withdrawMessage" placeholder="Escribe un mensaje para el cliente..."></textarea>
@@ -1435,7 +985,6 @@ async function openWithdrawDetail(withdraw) {
       </div>
 
       <div style="height:10px"></div>
-
       <div class="form-row">
         <div class="form-group">
           <label for="counterAmount">Contraoferta</label>
@@ -1458,24 +1007,18 @@ async function openWithdrawDetail(withdraw) {
 
 async function sendWithdrawMessage(id) {
   const message = document.getElementById("withdrawMessage")?.value || "";
-  if (!message.trim()) {
-    alert("Escribe un mensaje");
-    return;
-  }
-
+  if (!message.trim()) return alert("Escribe un mensaje");
   try {
     await apiFetch(API + "/admin/withdraw/message", {
       method: "POST",
       body: JSON.stringify({ id, message })
     });
-
     if (currentUser) await loadWithdraws(getUserId(currentUser), true);
-    if (currentWithdraw && String(currentWithdraw._id) === String(id)) {
-      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
-      if (refreshed) openWithdrawDetail(refreshed);
-    }
+    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+    if (refreshed) openWithdrawDetail(refreshed);
     toast("Mensaje enviado");
   } catch (e) {
+    console.error(e);
     toast("Error enviando mensaje");
   }
 }
@@ -1483,146 +1026,113 @@ async function sendWithdrawMessage(id) {
 async function sendCounterOffer(id) {
   const offerAmount = Number(document.getElementById("counterAmount")?.value || 0);
   const adminNote = document.getElementById("counterNote")?.value || "";
-
-  if (!Number.isFinite(offerAmount) || offerAmount < 0) {
-    alert("Monto inválido");
-    return;
-  }
-
+  if (!Number.isFinite(offerAmount) || offerAmount < 0) return alert("Monto inválido");
   try {
     await apiFetch(API + "/admin/withdraw/counter", {
       method: "POST",
-      body: JSON.stringify({
-        id,
-        offerAmount,
-        adminNote
-      })
+      body: JSON.stringify({ id, offerAmount, adminNote })
     });
-
     if (currentUser) await loadWithdraws(getUserId(currentUser), true);
-    if (currentWithdraw && String(currentWithdraw._id) === String(id)) {
-      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
-      if (refreshed) openWithdrawDetail(refreshed);
-    }
+    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+    if (refreshed) openWithdrawDetail(refreshed);
     toast("Contraoferta enviada");
   } catch (e) {
+    console.error(e);
     toast("Error creando contraoferta");
   }
 }
 
 async function acceptOfferAsAdmin(id) {
   try {
-    const w = allWithdraws.find(x => String(x._id) === String(id));
-    if (!w) return;
-
-    const result = await apiFetch(API + "/withdraw/accept-offer", {
-      method: "POST",
-      body: JSON.stringify({ id })
-    });
-
-    if (result) {
+    const endpoints = [
+      API + "/admin/withdraw/accept-offer",
+      API + "/withdraw/accept-offer"
+    ];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        const result = await apiFetch(url, { method: "POST", body: JSON.stringify({ id }) });
+        if (result !== null) { ok = true; break; }
+      } catch {}
+    }
+    if (ok) {
       if (currentUser) await loadWithdraws(getUserId(currentUser), true);
       const refreshed = allWithdraws.find(w => String(w._id) === String(id));
       if (refreshed) openWithdrawDetail(refreshed);
       toast("Oferta marcada como aceptada");
     }
   } catch (e) {
+    console.error(e);
     toast("Error aceptando oferta");
   }
 }
 
 async function approveWithdraw(id) {
   if (!id) return;
-
   const adminNote = prompt("Nota de aprobación (opcional):", "") || "";
-
   try {
-    await apiFetch(API + "/admin/withdraw/approve", {
-      method: "POST",
-      body: JSON.stringify({ id, adminNote })
-    });
-
-    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
-    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
-    if (refreshed) openWithdrawDetail(refreshed);
-    toast("Retiro aprobado");
+    const endpoints = [API + "/admin/withdraw/approve", API + "/admin/withdrawals/approve"];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, { method: "POST", body: JSON.stringify({ id, adminNote }) });
+        ok = true;
+        break;
+      } catch {}
+    }
+    if (ok) {
+      if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+      if (refreshed) openWithdrawDetail(refreshed);
+      toast("Retiro aprobado");
+    }
   } catch (e) {
+    console.error(e);
     toast("Error aprobando retiro");
   }
 }
 
 async function rejectWithdraw(id) {
   if (!id) return;
-
   const adminNote = prompt("Motivo del rechazo (opcional):", "") || "";
-
   try {
-    await apiFetch(API + "/admin/withdraw/reject", {
-      method: "POST",
-      body: JSON.stringify({ id, adminNote })
-    });
-
-    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
-    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
-    if (refreshed) openWithdrawDetail(refreshed);
-    toast("Retiro rechazado");
+    const endpoints = [API + "/admin/withdraw/reject", API + "/admin/withdrawals/reject"];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, { method: "POST", body: JSON.stringify({ id, adminNote }) });
+        ok = true;
+        break;
+      } catch {}
+    }
+    if (ok) {
+      if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+      const refreshed = allWithdraws.find(w => String(w._id) === String(id));
+      if (refreshed) openWithdrawDetail(refreshed);
+      toast("Retiro rechazado");
+    }
   } catch (e) {
+    console.error(e);
     toast("Error rechazando retiro");
   }
-}
-
-/* ================= DOCUMENTS ================= */
-async function loadDocuments(userId, render = true) {
-  if (!userId) return [];
-
-  const endpoints = [
-    API + "/admin/documents/" + encodeURIComponent(userId) + "?status=all",
-    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=all",
-    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=pending",
-  ];
-
-  let lastList = [];
-
-  for (const url of endpoints) {
-    try {
-      const data = await apiFetch(url);
-      const list = extractArray(data).map(normalizeDocumentItem);
-      lastList = list;
-
-      if (list.length || Array.isArray(data)) {
-        allDocuments = list || [];
-        if (render) renderDocumentList(allDocuments);
-        return allDocuments;
-      }
-    } catch (e) {}
-  }
-
-  allDocuments = lastList || [];
-  if (render) renderDocumentList(allDocuments);
-  return allDocuments;
 }
 
 function renderDocumentList(list) {
   const box = document.getElementById("documents");
   if (!box) return;
-
   box.innerHTML = "";
-
   if (!list || !list.length) {
     box.innerHTML = `<div class="small">Sin documentos</div>`;
     return;
   }
-
   list.forEach((raw) => {
     const doc = normalizeDocumentItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
-
     const badge = escapeHtml(String(doc.status || "pending"));
     const type = escapeHtml(doc.type || "N/A");
     const title = `#${escapeHtml(String(doc._id || ""))}`;
-
     div.innerHTML = `
       <div class="item-head">
         <div>
@@ -1636,22 +1146,43 @@ function renderDocumentList(list) {
         Tamaño: ${escapeHtml(String(Math.round((doc.size || 0) / 1024)))} KB
       </div>
     `;
-
     div.onclick = () => openDocumentDetail(doc);
     box.appendChild(div);
   });
 }
 
+async function loadDocuments(userId, render = true) {
+  if (!userId) return [];
+  const endpoints = [
+    API + "/admin/documents/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=all",
+    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=pending"
+  ];
+  let lastList = [];
+  for (const url of endpoints) {
+    try {
+      const data = await apiFetch(url);
+      const list = extractArray(data).map(normalizeDocumentItem);
+      lastList = list;
+      if (list.length || Array.isArray(data)) {
+        allDocuments = list || [];
+        if (render) renderDocumentList(allDocuments);
+        return allDocuments;
+      }
+    } catch {}
+  }
+  allDocuments = lastList || [];
+  if (render) renderDocumentList(allDocuments);
+  return allDocuments;
+}
+
 function openDocumentDetail(doc) {
   currentDocument = normalizeDocumentItem(doc || {});
   if (!currentDocument) return;
-
   const d = currentDocument;
   const box = document.getElementById("documentDetail");
   if (!box) return;
-
   const fileUrl = String(firstDefined(d.fileUrl, d.documentUrl, d.url, d.path, d.archivo, d.ruta, d.proofUrl, ""));
-
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
@@ -1669,13 +1200,12 @@ function openDocumentDetail(doc) {
 
       <div class="detail">
         <div class="small"><strong>Admin note:</strong> ${escapeHtml(d.adminNote || "—")}</div>
-        <div class="small"><strong>Archivo:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank" style="color:#d4af37;">Abrir archivo</a>` : "—"}</div>
+        <div class="small"><strong>Archivo:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank">Abrir archivo</a>` : "—"}</div>
         <div class="small"><strong>MIME:</strong> ${escapeHtml(d.mimeType || "—")}</div>
         <div class="small"><strong>Tamaño:</strong> ${escapeHtml(String(d.size || 0))} bytes</div>
       </div>
 
       <div style="height:12px"></div>
-
       <div class="form-group">
         <label for="docAdminNote">Nota admin</label>
         <textarea id="docAdminNote" placeholder="Escribe una nota sobre el documento...">${escapeHtml(d.adminNote || "")}</textarea>
@@ -1692,16 +1222,23 @@ function openDocumentDetail(doc) {
 async function approveDocument(id) {
   const note = document.getElementById("docAdminNote")?.value || "";
   try {
-    await apiFetch(API + "/admin/document/approve", {
-      method: "POST",
-      body: JSON.stringify({ id, note })
-    });
-
-    if (currentUser) await loadDocuments(getUserId(currentUser), true);
-    const refreshed = allDocuments.find(d => String(d._id) === String(id));
-    if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "approved" });
-    toast("Documento aprobado");
+    const endpoints = [API + "/admin/document/approve", API + "/admin/documents/approve"];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, { method: "POST", body: JSON.stringify({ id, note }) });
+        ok = true;
+        break;
+      } catch {}
+    }
+    if (ok) {
+      if (currentUser) await loadDocuments(getUserId(currentUser), true);
+      const refreshed = allDocuments.find(d => String(d._id) === String(id));
+      if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "approved" });
+      toast("Documento aprobado");
+    }
   } catch (e) {
+    console.error(e);
     toast("Error aprobando documento");
   }
 }
@@ -1709,30 +1246,32 @@ async function approveDocument(id) {
 async function rejectDocument(id) {
   const note = document.getElementById("docAdminNote")?.value || "";
   try {
-    await apiFetch(API + "/admin/document/reject", {
-      method: "POST",
-      body: JSON.stringify({ id, note })
-    });
-
-    if (currentUser) await loadDocuments(getUserId(currentUser), true);
-    const refreshed = allDocuments.find(d => String(d._id) === String(id));
-    if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "rejected" });
-    toast("Documento rechazado");
+    const endpoints = [API + "/admin/document/reject", API + "/admin/documents/reject"];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, { method: "POST", body: JSON.stringify({ id, note }) });
+        ok = true;
+        break;
+      } catch {}
+    }
+    if (ok) {
+      if (currentUser) await loadDocuments(getUserId(currentUser), true);
+      const refreshed = allDocuments.find(d => String(d._id) === String(id));
+      if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "rejected" });
+      toast("Documento rechazado");
+    }
   } catch (e) {
+    console.error(e);
     toast("Error rechazando documento");
   }
 }
 
 async function uploadDocumentForUser() {
   if (!currentUser) return alert("Selecciona un usuario primero");
-
   const file = document.getElementById("docFile")?.files?.[0];
   const type = document.getElementById("docType")?.value || "other";
-
-  if (!file) {
-    alert("Selecciona un archivo");
-    return;
-  }
+  if (!file) return alert("Selecciona un archivo");
 
   const fd = new FormData();
   fd.append("userId", getUserId(currentUser));
@@ -1740,36 +1279,39 @@ async function uploadDocumentForUser() {
   fd.append("document", file);
 
   try {
-    await apiFetch(API + "/upload-document", {
-      method: "POST",
-      body: fd
-    });
-
-    await loadDocuments(getUserId(currentUser), true);
-    toast("Documento subido");
+    const endpoints = [API + "/upload-document", API + "/admin/upload-document"];
+    let ok = false;
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, { method: "POST", body: fd });
+        ok = true;
+        break;
+      } catch {}
+    }
+    if (ok) {
+      await loadDocuments(getUserId(currentUser), true);
+      toast("Documento subido");
+    }
   } catch (e) {
+    console.error(e);
     toast("Error subiendo documento");
   }
 }
 
-/* ================= LOAD ALL WITH FILTER FOR CURRENT USER ================= */
 async function refreshCurrentData() {
   if (!currentUser) return;
   await loadWithdraws(getUserId(currentUser), true);
   await loadDocuments(getUserId(currentUser), true);
 }
 
-/* ================= LOGOUT ================= */
 function logout() {
   localStorage.removeItem("admin_token");
   localStorage.removeItem("token");
   location.href = "login.html";
 }
 
-/* ================= INIT ================= */
 connectSocket();
 loadUsers();
 </script>
-
 </body>
 </html>
