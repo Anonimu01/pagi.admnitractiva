@@ -259,6 +259,7 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
   },
+  transports: ["websocket", "polling"],
 });
 
 app.set("io", io);
@@ -269,13 +270,16 @@ app.use((req, res, next) => {
 });
 
 io.on("connection", (socket) => {
-  console.log("socket connected", socket.id);
+  console.log("✅ socket connected", socket.id);
 
+  /* =========================================
+     WITHDRAWS SNAPSHOT
+  ========================================= */
   socket.on("request_withdraws", async (filters = {}) => {
     try {
       const withdraws = await loadWithdraws({
         userId: filters.userId || null,
-        status: filters.status || "pending",
+        status: filters.status || "all",
         limit: Math.min(Number(filters.limit || 100) || 100, 500),
       });
 
@@ -283,8 +287,14 @@ io.on("connection", (socket) => {
         ok: true,
         count: withdraws.length,
         withdraws,
+        data: withdraws,
+        items: withdraws,
       });
+
+      console.log("📤 withdraws_snapshot enviado");
     } catch (err) {
+      console.error("request_withdraws error:", err);
+
       socket.emit("withdraws_snapshot", {
         ok: false,
         error: err?.message || "error",
@@ -292,11 +302,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  /* =========================================
+     DOCUMENTS SNAPSHOT
+  ========================================= */
   socket.on("request_documents", async (filters = {}) => {
     try {
       const documents = await loadDocuments({
         userId: filters.userId || null,
-        status: filters.status || "pending",
+        status: filters.status || "all",
         limit: Math.min(Number(filters.limit || 100) || 100, 500),
       });
 
@@ -304,8 +317,14 @@ io.on("connection", (socket) => {
         ok: true,
         count: documents.length,
         documents,
+        data: documents,
+        items: documents,
       });
+
+      console.log("📤 documents_snapshot enviado");
     } catch (err) {
+      console.error("request_documents error:", err);
+
       socket.emit("documents_snapshot", {
         ok: false,
         error: err?.message || "error",
@@ -313,10 +332,80 @@ io.on("connection", (socket) => {
     }
   });
 
+  /* =========================================
+     JOIN USER ROOM
+  ========================================= */
+  socket.on("join_user_room", (userId) => {
+    if (!userId) return;
+
+    socket.join(`user:${userId}`);
+
+    console.log(`👤 socket ${socket.id} joined user:${userId}`);
+  });
+
+  /* =========================================
+     JOIN ADMIN ROOM
+  ========================================= */
+  socket.on("join_admin", () => {
+    socket.join("admins");
+
+    console.log(`🛡️ admin joined: ${socket.id}`);
+  });
+
   socket.on("disconnect", () => {
-    console.log("socket disconnected", socket.id);
+    console.log("❌ socket disconnected", socket.id);
   });
 });
+
+/* ======================================================
+   REALTIME HELPERS
+====================================================== */
+
+async function emitWithdrawUpdate(withdrawId) {
+  try {
+    const withdraw = await Withdraw.findById(withdrawId)
+      .lean()
+      .catch(() => null);
+
+    if (!withdraw) return;
+
+    io.emit("withdraw:update", withdraw);
+
+    io.to("admins").emit("admin:withdraw:update", withdraw);
+
+    io.to(`user:${withdraw.userId}`).emit(
+      "user:withdraw:update",
+      withdraw
+    );
+
+    console.log("🚀 withdraw:update emitido", withdrawId);
+  } catch (err) {
+    console.error("emitWithdrawUpdate error:", err);
+  }
+}
+
+async function emitDocumentUpdate(documentId) {
+  try {
+    const document = await Document.findById(documentId)
+      .lean()
+      .catch(() => null);
+
+    if (!document) return;
+
+    io.emit("document:update", document);
+
+    io.to("admins").emit("admin:document:update", document);
+
+    io.to(`user:${document.userId}`).emit(
+      "user:document:update",
+      document
+    );
+
+    console.log("🚀 document:update emitido", documentId);
+  } catch (err) {
+    console.error("emitDocumentUpdate error:", err);
+  }
+}
 /* ======================================================
    HELPERS
 ====================================================== */
@@ -332,9 +421,7 @@ function getCookie(req, name) {
   return null;
 }
 
-
 async function openUser(userId) {
-
   // DETENER TIMER ANTERIOR
   if (adminRealtimeTimer) {
     clearInterval(adminRealtimeTimer);
@@ -424,14 +511,17 @@ async function getUserDocFromBearer(req) {
     if (!auth || !auth.toLowerCase().startsWith("bearer ")) return null;
     const token = String(auth).split(" ")[1];
     if (!token) return null;
+
     let payload;
     try {
       payload = jwt.verify(token, JWT_SECRET);
     } catch {
       return null;
     }
+
     const userId = payload && (payload.id || payload.sub || payload.userId || payload._id);
     if (!userId) return null;
+
     return await User.findById(userId).catch(() => null);
   } catch {
     return null;
@@ -444,6 +534,7 @@ function isAdminTokenValid(req) {
   const tokenFromCookie = getCookie(req, "admin_token");
   const token = bearer || tokenFromCookie;
   if (!token) return false;
+
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     return !!decoded && (decoded.admin === true || decoded.role === "admin");
@@ -494,7 +585,12 @@ function buildCoreUrl(endpoint) {
 
 async function proxyToCore(req, endpoint, options = {}) {
   if (!CORE_API_URL || !fetchFn) {
-    return { ok: false, status: 503, data: { ok: false, error: "core_api_not_configured" }, headers: null };
+    return {
+      ok: false,
+      status: 503,
+      data: { ok: false, error: "core_api_not_configured" },
+      headers: null,
+    };
   }
 
   try {
@@ -527,7 +623,12 @@ async function proxyToCore(req, endpoint, options = {}) {
     return { ok: response.ok, status: response.status, data, headers: response.headers };
   } catch (err) {
     console.error("❌ Proxy error:", err?.message || err);
-    return { ok: false, status: 500, data: { ok: false, error: "proxy_error", message: err?.message || String(err) }, headers: null };
+    return {
+      ok: false,
+      status: 500,
+      data: { ok: false, error: "proxy_error", message: err?.message || String(err) },
+      headers: null,
+    };
   }
 }
 
@@ -570,14 +671,14 @@ function trimSeenSet(set, maxSize = 1000) {
 async function loadWithdraws({ userId = null, status = null, limit = 100 } = {}) {
   const query = {};
   if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status);
+  if (status && status !== "all") query.status = String(status); // ✅ CORRECTO
   return await Withdraw.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
 async function loadDocuments({ userId = null, status = null, limit = 100 } = {}) {
   const query = {};
   if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status);
+  if (status && status !== "all") query.status = String(status); // ✅ CORRECTO
   return await Document.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
@@ -724,10 +825,13 @@ async function loadTransactionsForUser(userId, limit = 50) {
   return await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
-async function loadWithdrawsForUser(userId, status = "pendiente") {
+async function loadWithdrawsForUser(userId, status = "all") {
   const query = { userId: String(userId) };
 
-  if (status) query.Estado = status;
+  // ✅ CLAVE: tus documentos reales usan `status`, NO `Estado`
+  if (status && status !== "all") {
+    query.status = String(status);
+  }
 
   return await Withdraw.find(query)
     .sort({ createdAt: -1 })
@@ -735,7 +839,6 @@ async function loadWithdrawsForUser(userId, status = "pendiente") {
     .exec()
     .catch(() => []);
 }
-
 
 async function recordTransaction({
   user,
@@ -1133,7 +1236,11 @@ async function syncCoreUsersToLocalAndZoho() {
 
     for (const raw of coreUsers) {
       const before = await User.findOne(
-        raw?.email ? { email: String(raw.email).trim().toLowerCase() } : raw?.id || raw?._id ? { sourceId: String(raw.id || raw._id) } : null
+        raw?.email
+          ? { email: String(raw.email).trim().toLowerCase() }
+          : raw?.id || raw?._id
+          ? { sourceId: String(raw.id || raw._id) }
+          : null
       ).catch(() => null);
 
       const doc = await upsertLocalUserFromCore(raw);
@@ -1229,6 +1336,7 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
 
   const account = await buildAccountForUser(user);
   emitStateUpdates(user._id, account, null, tx);
+
   return {
     ok: true,
     status: 200,
@@ -1289,6 +1397,7 @@ async function localWithdraw({ userId, amount, note, force = false }) {
 
   const account = await buildAccountForUser(user);
   emitStateUpdates(user._id, account, null, tx);
+
   return {
     ok: true,
     status: 200,
@@ -1672,6 +1781,16 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
 });
 
 /* ======================================================
+   WITHDRAW HELPERS
+====================================================== */
+function emitWithdrawUpdate(payload) {
+  io.emit("withdraw:update", payload);
+  io.emit("admin:withdraw-response", payload);
+  io.emit("admin:withdraw-update", payload);
+  io.emit(`withdraw:${payload.userId}`, payload);
+}
+
+/* ======================================================
    WITHDRAW REQUESTS
 ====================================================== */
 app.get(["/api/admin/withdraws/:userId", "/api/admin/withdrawals/:userId"], ensureAdminAuth, async (req, res) => {
@@ -1775,33 +1894,31 @@ app.post(["/api/admin/withdraw/approve", "/api/admin/withdrawals/approve"], ensu
 
     w.status = "approved";
     w.Estado = "aprobado";
+    w.adminNote = adminNote;
     w.updatedAt = new Date();
 
     await w.save();
 
-    io.emit("admin:withdraw-response", {
-      userId,
-      status: "approved",
-      id,
-    });
-
-    io.emit(`withdraw:${userId}`, "approved");
-    io.emit("withdraw:update", {
-      _id: id,
-      userId,
-      status: "approved",
-    });
-
-    return res.json({
+    const payload = {
       ok: true,
-      msg: "Retiro aprobado",
-    });
+      id: String(w._id),
+      userId,
+      amount,
+      status: "approved",
+      message: "Retiro aprobado",
+      updatedAt: new Date(),
+    };
+
+    emitWithdrawUpdate(payload);
+
+    return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/approve error:", err);
 
     return res.status(500).json({
       ok: false,
       msg: "Error aprobando retiro",
+      error: err?.message || String(err),
     });
   }
 });
@@ -1826,6 +1943,8 @@ app.post(["/api/admin/withdraw/reject", "/api/admin/withdrawals/reject"], ensure
       });
     }
 
+    const userId = String(w.userId || "");
+
     w.status = "rejected";
     w.Estado = "rechazado";
     w.adminNote = adminNote;
@@ -1833,29 +1952,26 @@ app.post(["/api/admin/withdraw/reject", "/api/admin/withdrawals/reject"], ensure
 
     await w.save();
 
-    io.emit("admin:withdraw-response", {
-      userId: w.userId,
-      status: "rejected",
-      id,
-    });
-
-    io.emit(`withdraw:${w.userId}`, "rejected");
-    io.emit("withdraw:update", {
-      _id: id,
-      userId: w.userId,
-      status: "rejected",
-    });
-
-    return res.json({
+    const payload = {
       ok: true,
-      msg: "Retiro rechazado",
-    });
+      id: String(w._id),
+      userId,
+      amount: Number(w.cantidad ?? w.amount ?? 0),
+      status: "rejected",
+      message: "Retiro rechazado",
+      updatedAt: new Date(),
+    };
+
+    emitWithdrawUpdate(payload);
+
+    return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/reject error:", err);
 
     return res.status(500).json({
       ok: false,
       msg: "Error rechazando retiro",
+      error: err?.message || String(err),
     });
   }
 });
@@ -2130,11 +2246,16 @@ app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, 
         io.emit(`balance:${userId}`, balance);
       }
 
-      io.emit(`withdraw:${userId}`, "approved");
-      io.emit("withdraw:update", {
-        userId,
+      const payload = {
+        ok: true,
+        userId: String(userId),
+        amount: numericAmount,
         status: "approved",
-      });
+        message: "Retiro aprobado",
+        updatedAt: new Date(),
+      };
+
+      emitWithdrawUpdate(payload);
 
       return res.status(remote.status).json(remote.data);
     }
