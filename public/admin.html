@@ -737,6 +737,75 @@ function extractArray(resp) {
   return [];
 }
 
+function firstDefined(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return undefined;
+}
+
+function normalizeStatusLabel(value) {
+  const s = String(value || "pending").trim().toLowerCase();
+  if (["pendiente", "pending"].includes(s)) return "pending";
+  if (["aprobado", "approved"].includes(s)) return "approved";
+  if (["rechazado", "rejected"].includes(s)) return "rejected";
+  if (["counter_offer", "counter offer", "contraoferta"].includes(s)) return "counter_offer";
+  return s.replace(/\s+/g, "_") || "pending";
+}
+
+function getOwnerUserId(record = {}) {
+  return String(firstDefined(record.userId, record.user, record.usuario, record.ownerId, record.clientId, record.client, ""));
+}
+
+function normalizeWithdrawItem(w = {}) {
+  const status = normalizeStatusLabel(firstDefined(w.status, w.Estado, w.estado, "pending"));
+  const amount = Number(firstDefined(w.amount, w.Amount, w.cantidad, w.Cantidad, 0)) || 0;
+
+  return {
+    ...w,
+    status,
+    amount,
+    method: String(firstDefined(w.method, w.metodo, w.Metodo, "N/A")),
+    walletAddress: String(firstDefined(w.walletAddress, w.wallet, w.direccionWallet, w.proofUrl, "—")),
+    bankName: String(firstDefined(w.bankName, w.banco, "—")),
+    accountNumber: String(firstDefined(w.accountNumber, w.account, w.cuenta, w.Cuenta, "—")),
+    note: String(firstDefined(w.note, w.Nota, "")),
+    adminNote: String(firstDefined(w.adminNote, w.adminnote, "")),
+    processedBy: String(firstDefined(w.processedBy, w.procesadoPor, "")),
+    processedAt: firstDefined(w.processedAt, w.procesadoAt, null),
+    createdAt: firstDefined(w.createdAt, w.created_at, null),
+    messages: Array.isArray(w.messages) ? w.messages : [],
+  };
+}
+
+function normalizeDocumentItem(doc = {}) {
+  const status = normalizeStatusLabel(firstDefined(doc.status, doc.Estado, doc.estado, "pending"));
+  const type = String(firstDefined(doc.type, doc.tipo, doc.documentType, "documento"));
+  const fileUrl = String(firstDefined(doc.fileUrl, doc.documentUrl, doc.url, doc.path, doc.archivo, doc.ruta, doc.proofUrl, ""));
+  const fileName = String(firstDefined(doc.originalName, doc.filename, doc.nombre, doc.fileName, doc.name, "archivo"));
+  const mimeType = String(firstDefined(doc.mimeType, doc.mime, "—"));
+  const size = Number(firstDefined(doc.size, doc.fileSize, 0)) || 0;
+
+  return {
+    ...doc,
+    status,
+    type,
+    fileUrl,
+    fileName,
+    mimeType,
+    size,
+    createdAt: firstDefined(doc.createdAt, doc.created_at, null),
+  };
+}
+
+function renderWithdrawDetail(withdraw) {
+  return openWithdrawDetail(withdraw);
+}
+
+function renderDocumentDetail(doc) {
+  return openDocumentDetail(doc);
+}
+
 function setTab(tabName) {
   const tabs = document.querySelectorAll(".tab-btn");
   const panels = document.querySelectorAll(".tab-panel");
@@ -804,56 +873,55 @@ function connectSocket() {
 
     socket.on("connect", () => {
       console.log("socket connected", socket.id);
+      socket.emit("join_admin_room");
+      socket.emit("request_withdraws", { status: "all" });
+      socket.emit("request_documents", { status: "all" });
+
       if (currentUser) {
-        socket.emit("withdraw:join", { userId: getUserId(currentUser) });
+        const userId = getUserId(currentUser);
+        socket.emit("request_withdraws", { userId, status: "all" });
+        socket.emit("request_documents", { userId, status: "all" });
       }
     });
 
-    socket.on("admin:new-withdraw", (withdraw) => {
-      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
-        loadWithdraws(getUserId(currentUser), false);
+    const refreshWithdrawsForCurrent = () => {
+      if (currentUser) {
+        loadWithdraws(getUserId(currentUser), true);
       }
       loadAllWithdraws(false);
-    });
+    };
 
+    const refreshDocumentsForCurrent = () => {
+      if (currentUser) {
+        loadDocuments(getUserId(currentUser), true);
+      }
+    };
+
+    socket.on("withdraw:new", refreshWithdrawsForCurrent);
+    socket.on("admin:new-withdraw", refreshWithdrawsForCurrent);
     socket.on("admin:withdraw-update", (withdraw) => {
-      if (currentWithdraw && String(currentWithdraw._id) === String(withdraw._id)) {
-        currentWithdraw = withdraw;
-        renderWithdrawDetail(withdraw);
+      const normalized = normalizeWithdrawItem(withdraw || {});
+      if (currentWithdraw && String(currentWithdraw._id) === String(normalized._id)) {
+        currentWithdraw = normalized;
+        renderWithdrawDetail(normalized);
       }
-      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
-        loadWithdraws(getUserId(currentUser), false);
-      }
-      loadAllWithdraws(false);
+      refreshWithdrawsForCurrent();
     });
-
+    socket.on("admin:withdraw-response", refreshWithdrawsForCurrent);
     socket.on("withdraw:update", (withdraw) => {
-      if (currentWithdraw && String(currentWithdraw._id) === String(withdraw._id)) {
-        currentWithdraw = withdraw;
-        renderWithdrawDetail(withdraw);
+      const normalized = normalizeWithdrawItem(withdraw || {});
+      if (currentWithdraw && String(currentWithdraw._id) === String(normalized._id)) {
+        currentWithdraw = normalized;
+        renderWithdrawDetail(normalized);
       }
-      if (currentUser && String(withdraw.userId) === String(getUserId(currentUser))) {
-        loadWithdraws(getUserId(currentUser), false);
-      }
+      refreshWithdrawsForCurrent();
     });
 
-    socket.on("document:uploaded", (payload) => {
-      if (currentUser && String(payload.userId) === String(getUserId(currentUser))) {
-        loadDocuments(getUserId(currentUser), false);
-      }
-    });
-
-    socket.on("document:approved", (payload) => {
-      if (currentDocument && String(currentDocument._id) === String(payload.id)) {
-        loadDocuments(getUserId(currentUser), false);
-      }
-    });
-
-    socket.on("document:rejected", (payload) => {
-      if (currentDocument && String(currentDocument._id) === String(payload.id)) {
-        loadDocuments(getUserId(currentUser), false);
-      }
-    });
+    socket.on("document:new", refreshDocumentsForCurrent);
+    socket.on("admin:document:new", refreshDocumentsForCurrent);
+    socket.on("document:uploaded", refreshDocumentsForCurrent);
+    socket.on("document:approved", refreshDocumentsForCurrent);
+    socket.on("document:rejected", refreshDocumentsForCurrent);
 
     socket.on("disconnect", () => {
       console.log("socket disconnected");
@@ -1116,7 +1184,9 @@ function openUser(u) {
   setTimeout(loadChart, 300);
 
   if (socket) {
-    socket.emit("withdraw:join", { userId });
+    socket.emit("join_admin_room");
+    socket.emit("request_withdraws", { userId, status: "all" });
+    socket.emit("request_documents", { userId, status: "all" });
   }
 }
 
@@ -1211,27 +1281,46 @@ async function updateLeverage() {
 async function loadWithdraws(userId, render = true) {
   if (!userId) return [];
 
-  try {
-    const data = await apiFetch(API + "/admin/withdraws/" + encodeURIComponent(userId));
-    const list = extractArray(data);
-    allWithdraws = list || [];
-    if (render) renderWithdrawList(allWithdraws);
-    return allWithdraws;
-  } catch (e) {
-    if (render) {
-      const box = document.getElementById("withdraws");
-      if (box) box.innerHTML = `<div class="error">Error cargando retiros</div>`;
-    }
-    return [];
+  const endpoints = [
+    API + "/admin/withdraws/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=all",
+    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=pending",
+  ];
+
+  let lastList = [];
+
+  for (const url of endpoints) {
+    try {
+      const data = await apiFetch(url);
+      const list = extractArray(data).map(normalizeWithdrawItem);
+      lastList = list;
+
+      if (list.length || Array.isArray(data)) {
+        allWithdraws = list || [];
+        if (render) renderWithdrawList(allWithdraws);
+        return allWithdraws;
+      }
+    } catch (e) {}
   }
+
+  allWithdraws = lastList || [];
+  if (render) renderWithdrawList(allWithdraws);
+  return allWithdraws;
 }
 
 async function loadAllWithdraws(render = true) {
   try {
-    const data = await apiFetch(API + "/admin/withdraws");
-    const list = extractArray(data);
+    const data = await apiFetch(API + "/admin/withdraws?status=all");
+    const list = extractArray(data).map(normalizeWithdrawItem);
     allWithdraws = list || [];
-    if (render && currentUser) renderWithdrawList(allWithdraws.filter(w => String(w.userId) === String(getUserId(currentUser))));
+    if (render) {
+      if (currentUser) {
+        const uid = String(getUserId(currentUser));
+        renderWithdrawList(allWithdraws.filter(w => String(getOwnerUserId(w)) === uid));
+      } else {
+        renderWithdrawList(allWithdraws);
+      }
+    }
     return allWithdraws;
   } catch (e) {
     return [];
@@ -1249,15 +1338,19 @@ function renderWithdrawList(list) {
     return;
   }
 
-  list.forEach(w => {
+  list.forEach((raw) => {
+    const w = normalizeWithdrawItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
 
-    const badge = escapeHtml(String(w.status || "default"));
+    const badge = escapeHtml(String(w.status || "pending"));
     const method = escapeHtml(w.method || "N/A");
     const amount = escapeHtml(formatMoney(w.amount || 0));
     const title = `#${escapeHtml(String(w._id || ""))}`;
+    const account = escapeHtml(w.accountNumber || "—");
+    const bank = escapeHtml(w.bankName || "—");
+    const wallet = escapeHtml(w.walletAddress || "—");
 
     div.innerHTML = `
       <div class="item-head">
@@ -1268,9 +1361,9 @@ function renderWithdrawList(list) {
         <span class="badge ${statusClass(w.status)}">${badge}</span>
       </div>
       <div class="small">
-        Wallet: ${escapeHtml(w.walletAddress || "—")}<br/>
-        Banco: ${escapeHtml(w.bankName || "—")}<br/>
-        Cuenta: ${escapeHtml(w.accountNumber || "—")}
+        Wallet: ${wallet}<br/>
+        Banco: ${bank}<br/>
+        Cuenta: ${account}
       </div>
     `;
 
@@ -1280,13 +1373,14 @@ function renderWithdrawList(list) {
 }
 
 async function openWithdrawDetail(withdraw) {
-  currentWithdraw = withdraw;
-  if (!withdraw) return;
+  currentWithdraw = normalizeWithdrawItem(withdraw || {});
+  if (!currentWithdraw) return;
 
+  const w = currentWithdraw;
   const box = document.getElementById("withdrawDetail");
   if (!box) return;
 
-  const msgs = Array.isArray(withdraw.messages) ? withdraw.messages : [];
+  const msgs = Array.isArray(w.messages) ? w.messages : [];
   const messagesHtml = msgs.length
     ? msgs.map(m => `
         <div class="msg ${escapeHtml(String(m.sender || ""))}">
@@ -1296,29 +1390,31 @@ async function openWithdrawDetail(withdraw) {
       `).join("")
     : `<div class="small">No hay mensajes aún</div>`;
 
+  const fileUrl = String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, ""));
+
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
         <div>
-          <div class="item-title">$${escapeHtml(formatMoney(withdraw.amount || 0))}</div>
+          <div class="item-title">$${escapeHtml(formatMoney(w.amount || 0))}</div>
           <div class="item-sub">
-            ID: ${escapeHtml(withdraw._id || "")}<br/>
-            Usuario: ${escapeHtml(withdraw.userId || "")}<br/>
-            Método: ${escapeHtml(withdraw.method || "—")}<br/>
-            Wallet: ${escapeHtml(withdraw.walletAddress || "—")}<br/>
-            Banco: ${escapeHtml(withdraw.bankName || "—")}<br/>
-            Cuenta: ${escapeHtml(withdraw.accountNumber || "—")}
+            ID: ${escapeHtml(w._id || "")}<br/>
+            Usuario: ${escapeHtml(w.userId || "")}<br/>
+            Método: ${escapeHtml(w.method || "—")}<br/>
+            Wallet: ${escapeHtml(w.walletAddress || "—")}<br/>
+            Banco: ${escapeHtml(w.bankName || "—")}<br/>
+            Cuenta: ${escapeHtml(w.accountNumber || "—")}
           </div>
         </div>
-        <span class="badge ${statusClass(withdraw.status)}">${escapeHtml(withdraw.status || "default")}</span>
+        <span class="badge ${statusClass(w.status)}">${escapeHtml(w.status || "pending")}</span>
       </div>
 
       <div class="detail">
-        <div class="small"><strong>Nota del cliente:</strong> ${escapeHtml(withdraw.note || "—")}</div>
-        <div class="small"><strong>Nota admin:</strong> ${escapeHtml(withdraw.adminNote || "—")}</div>
-        <div class="small"><strong>Monto ofrecido:</strong> $${escapeHtml(formatMoney(withdraw.offerAmount || 0))}</div>
-        <div class="small"><strong>Procesado por:</strong> ${escapeHtml(withdraw.processedBy || "—")}</div>
-        <div class="small"><strong>Procesado at:</strong> ${escapeHtml(formatDate(withdraw.processedAt))}</div>
+        <div class="small"><strong>Nota del cliente:</strong> ${escapeHtml(w.note || "—")}</div>
+        <div class="small"><strong>Nota admin:</strong> ${escapeHtml(w.adminNote || "—")}</div>
+        <div class="small"><strong>Comprobante:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank" style="color:#d4af37;">Abrir</a>` : "—"}</div>
+        <div class="small"><strong>Procesado por:</strong> ${escapeHtml(w.processedBy || "—")}</div>
+        <div class="small"><strong>Procesado at:</strong> ${escapeHtml(formatDate(w.processedAt))}</div>
       </div>
 
       <div style="height:12px"></div>
@@ -1334,8 +1430,8 @@ async function openWithdrawDetail(withdraw) {
       </div>
 
       <div class="actions">
-        <button class="info" onclick="sendWithdrawMessage('${withdraw._id || ""}')">Enviar mensaje</button>
-        <button class="warning" onclick="approveWithdraw('${withdraw._id || ""}')">Aprobar</button>
+        <button class="info" onclick="sendWithdrawMessage('${w._id || ""}')">Enviar mensaje</button>
+        <button class="warning" onclick="approveWithdraw('${w._id || ""}')">Aprobar</button>
       </div>
 
       <div style="height:10px"></div>
@@ -1343,25 +1439,21 @@ async function openWithdrawDetail(withdraw) {
       <div class="form-row">
         <div class="form-group">
           <label for="counterAmount">Contraoferta</label>
-          <input id="counterAmount" type="number" step="0.01" placeholder="0.00" value="${escapeHtml(String(withdraw.offerAmount || 0))}" />
+          <input id="counterAmount" type="number" step="0.01" placeholder="0.00" value="${escapeHtml(String(w.offerAmount || 0))}" />
         </div>
         <div class="form-group">
           <label for="counterNote">Nota de contraoferta</label>
-          <input id="counterNote" type="text" placeholder="Explica la contraoferta..." value="${escapeHtml(withdraw.adminNote || "")}" />
+          <input id="counterNote" type="text" placeholder="Explica la contraoferta..." value="${escapeHtml(w.adminNote || "")}" />
         </div>
       </div>
 
       <div class="actions three">
-        <button class="primary" onclick="sendCounterOffer('${withdraw._id || ""}')">Enviar contraoferta</button>
-        <button class="success" onclick="acceptOfferAsAdmin('${withdraw._id || ""}')">Marcar oferta aceptada</button>
-        <button class="danger" onclick="rejectWithdraw('${withdraw._id || ""}')">Rechazar</button>
+        <button class="primary" onclick="sendCounterOffer('${w._id || ""}')">Enviar contraoferta</button>
+        <button class="success" onclick="acceptOfferAsAdmin('${w._id || ""}')">Marcar oferta aceptada</button>
+        <button class="danger" onclick="rejectWithdraw('${w._id || ""}')">Rechazar</button>
       </div>
     </div>
   `;
-
-  if (currentUser) {
-    loadWithdraws(getUserId(currentUser));
-  }
 }
 
 async function sendWithdrawMessage(id) {
@@ -1483,19 +1575,31 @@ async function rejectWithdraw(id) {
 async function loadDocuments(userId, render = true) {
   if (!userId) return [];
 
-  try {
-    const data = await apiFetch(API + "/admin/documents/" + encodeURIComponent(userId));
-    const list = extractArray(data);
-    allDocuments = list || [];
-    if (render) renderDocumentList(allDocuments);
-    return allDocuments;
-  } catch (e) {
-    if (render) {
-      const box = document.getElementById("documents");
-      if (box) box.innerHTML = `<div class="error">Error cargando documentos</div>`;
-    }
-    return [];
+  const endpoints = [
+    API + "/admin/documents/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=all",
+    API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=pending",
+  ];
+
+  let lastList = [];
+
+  for (const url of endpoints) {
+    try {
+      const data = await apiFetch(url);
+      const list = extractArray(data).map(normalizeDocumentItem);
+      lastList = list;
+
+      if (list.length || Array.isArray(data)) {
+        allDocuments = list || [];
+        if (render) renderDocumentList(allDocuments);
+        return allDocuments;
+      }
+    } catch (e) {}
   }
+
+  allDocuments = lastList || [];
+  if (render) renderDocumentList(allDocuments);
+  return allDocuments;
 }
 
 function renderDocumentList(list) {
@@ -1509,12 +1613,13 @@ function renderDocumentList(list) {
     return;
   }
 
-  list.forEach(doc => {
+  list.forEach((raw) => {
+    const doc = normalizeDocumentItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
 
-    const badge = escapeHtml(String(doc.status || "default"));
+    const badge = escapeHtml(String(doc.status || "pending"));
     const type = escapeHtml(doc.type || "N/A");
     const title = `#${escapeHtml(String(doc._id || ""))}`;
 
@@ -1522,7 +1627,7 @@ function renderDocumentList(list) {
       <div class="item-head">
         <div>
           <div class="item-title">${type}</div>
-          <div class="item-sub">${title} · ${escapeHtml(doc.originalName || doc.filename || "archivo")} · ${escapeHtml(formatDate(doc.createdAt))}</div>
+          <div class="item-sub">${title} · ${escapeHtml(doc.fileName || "archivo")} · ${escapeHtml(formatDate(doc.createdAt))}</div>
         </div>
         <span class="badge ${statusClass(doc.status)}">${badge}</span>
       </div>
@@ -1538,45 +1643,47 @@ function renderDocumentList(list) {
 }
 
 function openDocumentDetail(doc) {
-  currentDocument = doc;
-  if (!doc) return;
+  currentDocument = normalizeDocumentItem(doc || {});
+  if (!currentDocument) return;
 
+  const d = currentDocument;
   const box = document.getElementById("documentDetail");
   if (!box) return;
 
-  const fileUrl = doc.path || doc.url || "";
+  const fileUrl = String(firstDefined(d.fileUrl, d.documentUrl, d.url, d.path, d.archivo, d.ruta, d.proofUrl, ""));
+
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
         <div>
-          <div class="item-title">${escapeHtml(doc.type || "documento")}</div>
+          <div class="item-title">${escapeHtml(d.type || "documento")}</div>
           <div class="item-sub">
-            ID: ${escapeHtml(doc._id || "")}<br/>
-            Usuario: ${escapeHtml(doc.userId || "")}<br/>
-            Nombre: ${escapeHtml(doc.originalName || doc.filename || "archivo")}<br/>
-            Creado: ${escapeHtml(formatDate(doc.createdAt))}
+            ID: ${escapeHtml(d._id || "")}<br/>
+            Usuario: ${escapeHtml(d.userId || "")}<br/>
+            Nombre: ${escapeHtml(d.fileName || "archivo")}<br/>
+            Creado: ${escapeHtml(formatDate(d.createdAt))}
           </div>
         </div>
-        <span class="badge ${statusClass(doc.status)}">${escapeHtml(doc.status || "default")}</span>
+        <span class="badge ${statusClass(d.status)}">${escapeHtml(d.status || "pending")}</span>
       </div>
 
       <div class="detail">
-        <div class="small"><strong>Admin note:</strong> ${escapeHtml(doc.adminNote || "—")}</div>
+        <div class="small"><strong>Admin note:</strong> ${escapeHtml(d.adminNote || "—")}</div>
         <div class="small"><strong>Archivo:</strong> ${fileUrl ? `<a href="${escapeHtml(fileUrl)}" target="_blank" style="color:#d4af37;">Abrir archivo</a>` : "—"}</div>
-        <div class="small"><strong>MIME:</strong> ${escapeHtml(doc.mimeType || "—")}</div>
-        <div class="small"><strong>Tamaño:</strong> ${escapeHtml(String(doc.size || 0))} bytes</div>
+        <div class="small"><strong>MIME:</strong> ${escapeHtml(d.mimeType || "—")}</div>
+        <div class="small"><strong>Tamaño:</strong> ${escapeHtml(String(d.size || 0))} bytes</div>
       </div>
 
       <div style="height:12px"></div>
 
       <div class="form-group">
         <label for="docAdminNote">Nota admin</label>
-        <textarea id="docAdminNote" placeholder="Escribe una nota sobre el documento...">${escapeHtml(doc.adminNote || "")}</textarea>
+        <textarea id="docAdminNote" placeholder="Escribe una nota sobre el documento...">${escapeHtml(d.adminNote || "")}</textarea>
       </div>
 
       <div class="item-actions">
-        <button class="success" onclick="approveDocument('${doc._id || ""}')">Aprobar</button>
-        <button class="danger" onclick="rejectDocument('${doc._id || ""}')">Rechazar</button>
+        <button class="success" onclick="approveDocument('${d._id || ""}')">Aprobar</button>
+        <button class="danger" onclick="rejectDocument('${d._id || ""}')">Rechazar</button>
       </div>
     </div>
   `;
