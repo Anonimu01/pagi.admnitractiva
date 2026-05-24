@@ -1678,7 +1678,7 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
 ====================================================== */
 app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
   try {
-    const data = await loadWithdrawsForUser(req.params.userId, "pendiente");
+    const data = await loadWithdrawsForUser(req.params.userId, "pending");
 
     return res.json({
       ok: true,
@@ -1822,7 +1822,7 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
 app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
-    const status = req.query.status || "pendiente";
+    const status = req.query.status || "pending";
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
 
     const withdraws = await loadWithdraws({
