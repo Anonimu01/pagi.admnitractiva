@@ -1678,7 +1678,7 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
 ====================================================== */
 app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
   try {
-    const data = await loadWithdrawsForUser(req.params.userId, "pending");
+    const data = await loadWithdrawsForUser(req.params.userId, "pendiente");
 
     return res.json({
       ok: true,
@@ -1718,7 +1718,7 @@ app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
     }
 
     const userId = w.userId;
-    const amount = Number(w.amount || 0);
+    const amount = Number(w.cantidad ?? w.amount ?? 0);
 
     const remote = await proxyToCore(req, "/api/admin/withdraw", {
       method: "POST",
@@ -1744,6 +1744,7 @@ app.post("/api/admin/withdraw/approve", ensureAdminAuth, async (req, res) => {
     }
 
     w.status = "approved";
+    w.Estado = "aprobado";
     w.updatedAt = new Date();
 
     await w.save();
@@ -1791,6 +1792,7 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
     }
 
     w.status = "rejected";
+    w.Estado = "rechazado";
     w.updatedAt = new Date();
 
     await w.save();
@@ -1820,7 +1822,7 @@ app.post("/api/admin/withdraw/reject", ensureAdminAuth, async (req, res) => {
 app.get("/api/admin/withdraws", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
-    const status = req.query.status || "pending";
+    const status = req.query.status || "pendiente";
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
 
     const withdraws = await loadWithdraws({
@@ -1897,5 +1899,181 @@ app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
       ok: false,
       msg: "Error obteniendo documentos del usuario",
     });
+  }
+});
+
+/* ======================================================
+   UPDATE LEVERAGE
+====================================================== */
+app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, leverage } = req.body || {};
+    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
+      return res.status(400).json({ msg: "Datos incompletos" });
+    }
+
+    const user = await User.findById(userId).catch(() => null);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
+
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
+
+    const wallet = await getWalletDocForUser(user._id);
+    wallet.leverageFactor = lev;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
+    await user.save();
+
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(userId, account, null, null);
+
+    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
+  } catch (err) {
+    console.error("/api/admin/update-leverage error:", err);
+    return res.status(500).json({ msg: "Error actualizando leverage" });
+  }
+});
+
+app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
+  try {
+    const { leverage } = req.body || {};
+    const user = await User.findById(req.params.id).catch(() => null);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
+
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
+
+    const wallet = await getWalletDocForUser(user._id);
+    wallet.leverageFactor = lev;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
+    await user.save();
+
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(String(user._id), account, null, null);
+
+    return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet });
+  } catch (err) {
+    console.error("PUT /admin/users/leverage/:id error:", err);
+    return res.status(500).json({ msg: "Error actualizando leverage" });
+  }
+});
+
+/* ======================================================
+   UPDATE BALANCE
+====================================================== */
+app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, balance, leverage, note } = req.body || {};
+    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
+
+    const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
+    if (result?.headers) relaySetCookies(result.headers, res);
+
+    if (result && result.ok) return res.status(result.status).json(result.data);
+    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
+  } catch (err) {
+    console.error("/api/admin/update-balance error:", err);
+    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
+  }
+});
+
+/* ======================================================
+   DEPOSIT / WITHDRAW
+====================================================== */
+app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, amount, leverage, note, currency } = req.body || {};
+    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
+      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
+    }
+
+    const numericAmount = normalizeNumber(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "amount inválido" });
+    }
+
+    const remote = await proxyToCore(req, "/api/admin/deposit", {
+      method: "POST",
+      body: {
+        userId,
+        amount: numericAmount,
+        leverage: leverage !== undefined ? Number(leverage) : undefined,
+        note: note || "Admin deposit",
+        currency: currency || "USD",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
+      const account = remote.data?.data?.account || remote.data?.account || null;
+      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
+      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+      emitStateUpdates(userId, { account, wallet }, null, tx);
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+      return res.status(remote.status).json(remote.data);
+    }
+
+    const local = await localDeposit({
+      userId,
+      amount: numericAmount,
+      leverage: leverage !== undefined ? Number(leverage) : undefined,
+      note: note || "Admin deposit",
+      currency: currency || "USD",
+    });
+
+    return res.status(local.status).json(local.data);
+  } catch (err) {
+    console.error("/api/admin/deposit error:", err);
+    return res.status(500).json({ ok: false, msg: "Error depósito" });
+  }
+});
+
+app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, amount, note } = req.body || {};
+    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
+      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
+    }
+
+    const numericAmount = normalizeNumber(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "amount inválido" });
+    }
+
+    const remote = await proxyToCore(req, "/api/admin/withdraw", {
+      method: "POST",
+      body: { userId, amount: numericAmount, note: note || "Admin withdrawal" },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
+      const account = remote.data?.data?.account || remote.data?.account || null;
+      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
+      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+      emitStateUpdates(userId, { account, wallet }, null, tx);
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+      io.emit(`withdraw:${userId}`, "approved");
+      return res.status(remote.status).json(remote.data);
+    }
+
+    const local = await localWithdraw({
+      userId,
+      amount: numericAmount,
+      note: note || "Admin withdrawal",
+    });
+
+    return res.status(local.status).json(local.data);
+  } catch (err) {
+    console.error("/api/admin/withdraw error:", err);
+    return res.status(500).json({ ok: false, msg: "Error retiro" });
   }
 });
