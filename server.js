@@ -1432,7 +1432,7 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findById(userId).catch(() => null);
 
     if (!user) {
       return res.status(404).json({
@@ -1443,18 +1443,76 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 
     const wallet = await getWalletDocForUser(user._id);
 
+    /* =========================
+       UPDATE WALLET
+    ========================= */
+
     wallet.balance = amount;
     wallet.balanceOwn = amount;
+    wallet.availableBalance = amount;
+    wallet.equity = amount;
+    wallet.freeMargin = amount;
+    wallet.marginUsed = 0;
     wallet.updatedAt = new Date();
 
     await wallet.save();
 
+    /* =========================
+       UPDATE USER
+    ========================= */
+
+    user.balance = amount;
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    /* =========================
+       BUILD UPDATED ACCOUNT
+    ========================= */
+
+    const payload = await buildAccountForUser(user);
+
+    /* =========================
+       REALTIME EMITS
+    ========================= */
+
     io.emit(`balance:${userId}`, amount);
+
+    io.emit("account:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit(`account:${userId}`, {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit("admin:user:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+      balance: amount,
+    });
+
+    emitStateUpdates(
+      String(userId),
+      {
+        account: payload.account,
+        wallet: payload.wallet,
+      },
+      null,
+      null
+    );
 
     return res.json({
       ok: true,
       msg: "Saldo actualizado",
       balance: amount,
+      account: payload.account,
+      wallet: payload.wallet,
     });
 
   } catch (err) {
@@ -1463,7 +1521,7 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
     return res.status(500).json({
       ok: false,
       msg: "Error actualizando saldo",
-      error: err.message,
+      error: err?.message || String(err),
     });
   }
 });
