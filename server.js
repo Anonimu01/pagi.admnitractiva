@@ -5,69 +5,154 @@ const http = require("http");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const path = require("path");
+const fs = require("fs");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const helmet = require("helmet");
+const compression = require("compression");
+const mongoSanitize = require("express-mongo-sanitize");
+const xss = require("xss-clean");
 
 const connectDB = require("./config/db");
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  },
+  transports: ["websocket", "polling"],
+});
+
 const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
 
-/* ======================================================
-   CONFIG
-====================================================== */
-const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
-const CORE_USERS_ENDPOINTS = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
+const PORT = Number(process.env.PORT || 10000);
+const JWT_SECRET = process.env.JWT_SECRET || "admin-secret-dev";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
 const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
-const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
-const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
-const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
-const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
-const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
-const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
-const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
-const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
-const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
-const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
-const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
-const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
-const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
-const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
-const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
+const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
+const ALLOWED_ORIGINS = CLIENT_ORIGIN_RAW === "*" ? "*" : String(CLIENT_ORIGIN_RAW).split(",").map((s) => s.trim()).filter(Boolean);
 
-if (!CORE_API_URL) {
-  console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
+function safeRequire(mod) {
+  try {
+    return require(mod);
+  } catch {
+    return null;
+  }
 }
 
-if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
-  console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
-}
+const authRoutes = safeRequire("./routes/auth.routes.js");
+const userRoutes = safeRequire("./routes/user.routes.js");
+const verificationRoutes = safeRequire("./routes/verification.routes.js");
+const walletRoutes = safeRequire("./routes/wallet.routes.js");
+const positionsRoutes = safeRequire("./routes/positions.routes.js");
+const tradeRoutes = safeRequire("./routes/trade.routes.js");
+const accountRoutes = safeRequire("./routes/account.routes.js");
+const passwordRoutes = safeRequire("./routes/password.routes.js");
+const withdrawRoutes = safeRequire("./routes/withdraw.routes.js");
+
+const sendEmail = safeRequire("./utils/sendEmail.js");
+const PolygonSocket = safeRequire("./sockets/polygonSocket.js");
+const PriceHandler = safeRequire("./utils/priceHandler.js");
+const marketRoutesFactory = safeRequire("./routes/market.routes.js");
+const startRiskWatcher = safeRequire("./jobs/risk.job.js")?.startRiskWatcher;
+const connectDBFn = typeof connectDB === "function" ? connectDB : null;
+
+const uploadRoot = path.join(process.cwd(), "uploads");
+const documentsDir = path.join(uploadRoot, "documents");
+fs.mkdirSync(documentsDir, { recursive: true });
+
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  })
+);
+app.use(compression());
+app.use(mongoSanitize());
+app.use(xss());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS === "*") return callback(null, true);
+      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return callback(null, true);
+      } catch {}
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  })
+);
+
+app.options("*", cors());
+
+app.use(
+  rateLimit({
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+    max: Number(process.env.RATE_LIMIT_MAX || 5000),
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => ["GET", "HEAD", "OPTIONS"].includes(req.method),
+  })
+);
+
+app.use("/uploads", express.static(uploadRoot));
+app.use(express.static(path.join(__dirname, "public")));
+
+const documentStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, documentsDir),
+  filename: (_req, file, cb) => {
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, unique + path.extname(file.originalname || ""));
+  },
+});
+
+const uploadDocument = multer({
+  storage: documentStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 /* ======================================================
    DB
 ====================================================== */
-Promise.resolve(connectDB()).catch((err) => {
+Promise.resolve(connectDBFn ? connectDBFn() : null).catch((err) => {
   console.error("Error conectando DB:", err?.message || err);
 });
 
 mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
   startAdminRealtimeFeed();
+  try {
+    if (typeof startRiskWatcher === "function") {
+      const intervalMs = Number(process.env.RISK_JOB_INTERVAL_MS) || 30000;
+      const alertThreshold = Number(process.env.RISK_ALERT_THRESHOLD) || 30;
+      const closeThreshold = Number(process.env.RISK_CLOSE_THRESHOLD) || 15;
+      const stopFn = startRiskWatcher({ intervalMs, alertThreshold, closeThreshold });
+      if (typeof stopFn === "function") global.stopRiskWatcher = stopFn;
+      console.log(`🛡️ Risk watcher iniciado (interval=${intervalMs}ms alert=${alertThreshold}% close=${closeThreshold}%)`);
+    }
+  } catch (e) {
+    console.error("Error iniciando risk watcher:", e);
+  }
 });
 
 mongoose.connection.on("error", (err) => {
   console.error("❌ Mongo connection error:", err);
 });
-
 mongoose.connection.on("disconnected", () => {
   console.warn("⚠️ Mongo disconnected");
 });
@@ -164,8 +249,11 @@ const withdrawSchema = new mongoose.Schema(
   {
     userId: { type: String, index: true },
     amount: { type: Number, default: 0 },
+    method: { type: String, default: "" },
+    walletAddress: { type: String, default: "" },
     status: { type: String, default: "pending", index: true },
     note: { type: String, default: "" },
+    adminNote: { type: String, default: "" },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
   },
@@ -195,218 +283,6 @@ const Position = mongoose.models.Position || mongoose.model("Position", position
 const Withdraw = mongoose.models.Withdraw || mongoose.model("Withdraw", withdrawSchema);
 
 /* ======================================================
-   MIDDLEWARE
-====================================================== */
-const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
-
-function parseAllowedOrigins(raw) {
-  if (!raw || raw === "*") return "*";
-
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-const ALLOWED_ORIGINS = parseAllowedOrigins(CLIENT_ORIGIN_RAW);
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-
-      if (ALLOWED_ORIGINS === "*") {
-        return callback(null, true);
-      }
-
-      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) {
-        return callback(null, true);
-      }
-
-      try {
-        const url = new URL(origin);
-
-        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-          return callback(null, true);
-        }
-      } catch {}
-
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-  })
-);
-
-app.use(
-  rateLimit({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
-    max: Number(process.env.RATE_LIMIT_MAX || 200),
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
-
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-app.use(express.static(path.join(__dirname, "public")));
-
-/* ======================================================
-   SOCKET.IO
-====================================================== */
-const io = new Server(server, {
-  cors: {
-    origin: ALLOWED_ORIGINS === "*" ? true : ALLOWED_ORIGINS,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-  transports: ["websocket", "polling"],
-});
-
-app.set("io", io);
-
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
-
-io.on("connection", (socket) => {
-  console.log("✅ socket connected", socket.id);
-
-  /* =========================================
-     WITHDRAWS SNAPSHOT
-  ========================================= */
-  socket.on("request_withdraws", async (filters = {}) => {
-    try {
-      const withdraws = await loadWithdraws({
-        userId: filters.userId || null,
-        status: filters.status || "all",
-        limit: Math.min(Number(filters.limit || 100) || 100, 500),
-      });
-
-      socket.emit("withdraws_snapshot", {
-        ok: true,
-        count: withdraws.length,
-        withdraws,
-        data: withdraws,
-        items: withdraws,
-      });
-
-      console.log("📤 withdraws_snapshot enviado");
-    } catch (err) {
-      console.error("request_withdraws error:", err);
-
-      socket.emit("withdraws_snapshot", {
-        ok: false,
-        error: err?.message || "error",
-      });
-    }
-  });
-
-  /* =========================================
-     DOCUMENTS SNAPSHOT
-  ========================================= */
-  socket.on("request_documents", async (filters = {}) => {
-    try {
-      const documents = await loadDocuments({
-        userId: filters.userId || null,
-        status: filters.status || "all",
-        limit: Math.min(Number(filters.limit || 100) || 100, 500),
-      });
-
-      socket.emit("documents_snapshot", {
-        ok: true,
-        count: documents.length,
-        documents,
-        data: documents,
-        items: documents,
-      });
-
-      console.log("📤 documents_snapshot enviado");
-    } catch (err) {
-      console.error("request_documents error:", err);
-
-      socket.emit("documents_snapshot", {
-        ok: false,
-        error: err?.message || "error",
-      });
-    }
-  });
-
-  /* =========================================
-     JOIN USER ROOM
-  ========================================= */
-  socket.on("join_user_room", (userId) => {
-    if (!userId) return;
-
-    socket.join(`user:${userId}`);
-
-    console.log(`👤 socket ${socket.id} joined user:${userId}`);
-  });
-
-  /* =========================================
-     JOIN ADMIN ROOM
-  ========================================= */
-  socket.on("join_admin", () => {
-    socket.join("admins");
-
-    console.log(`🛡️ admin joined: ${socket.id}`);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("❌ socket disconnected", socket.id);
-  });
-});
-
-/* ======================================================
-   REALTIME HELPERS
-====================================================== */
-
-async function emitWithdrawUpdate(withdrawId) {
-  try {
-    const withdraw = await Withdraw.findById(withdrawId)
-      .lean()
-      .catch(() => null);
-
-    if (!withdraw) return;
-
-    io.emit("withdraw:update", withdraw);
-
-    io.to("admins").emit("admin:withdraw:update", withdraw);
-
-    io.to(`user:${withdraw.userId}`).emit(
-      "user:withdraw:update",
-      withdraw
-    );
-
-    console.log("🚀 withdraw:update emitido", withdrawId);
-  } catch (err) {
-    console.error("emitWithdrawUpdate error:", err);
-  }
-}
-
-async function emitDocumentUpdate(documentId) {
-  try {
-    const document = await Document.findById(documentId)
-      .lean()
-      .catch(() => null);
-
-    if (!document) return;
-
-    io.emit("document:update", document);
-
-    io.to("admins").emit("admin:document:update", document);
-
-    io.to(`user:${document.userId}`).emit(
-      "user:document:update",
-      document
-    );
-
-    console.log("🚀 document:update emitido", documentId);
-  } catch (err) {
-    console.error("emitDocumentUpdate error:", err);
-  }
-}
-/* ======================================================
    HELPERS
 ====================================================== */
 function getCookie(req, name) {
@@ -422,7 +298,6 @@ function getCookie(req, name) {
 }
 
 async function openUser(userId) {
-  // DETENER TIMER ANTERIOR
   if (adminRealtimeTimer) {
     clearInterval(adminRealtimeTimer);
     adminRealtimeTimer = null;
@@ -433,7 +308,6 @@ async function openUser(userId) {
   await loadDocuments(userId);
   await loadWithdraws(userId);
 
-  // NUEVO TIMER
   adminRealtimeTimer = setInterval(async () => {
     await loadDocuments(userId);
     await loadWithdraws(userId);
@@ -511,17 +385,14 @@ async function getUserDocFromBearer(req) {
     if (!auth || !auth.toLowerCase().startsWith("bearer ")) return null;
     const token = String(auth).split(" ")[1];
     if (!token) return null;
-
     let payload;
     try {
       payload = jwt.verify(token, JWT_SECRET);
     } catch {
       return null;
     }
-
     const userId = payload && (payload.id || payload.sub || payload.userId || payload._id);
     if (!userId) return null;
-
     return await User.findById(userId).catch(() => null);
   } catch {
     return null;
@@ -557,9 +428,7 @@ function ensureAdminAuth(req, res, next) {
 }
 
 function rewriteSetCookie(cookie) {
-  return String(cookie || "")
-    .replace(/;\s*Domain=[^;]+/gi, "")
-    .replace(/;\s*domain=[^;]+/gi, "");
+  return String(cookie || "").replace(/;\s*Domain=[^;]+/gi, "").replace(/;\s*domain=[^;]+/gi, "");
 }
 
 function relaySetCookies(fromHeaders, toRes) {
@@ -585,12 +454,7 @@ function buildCoreUrl(endpoint) {
 
 async function proxyToCore(req, endpoint, options = {}) {
   if (!CORE_API_URL || !fetchFn) {
-    return {
-      ok: false,
-      status: 503,
-      data: { ok: false, error: "core_api_not_configured" },
-      headers: null,
-    };
+    return { ok: false, status: 503, data: { ok: false, error: "core_api_not_configured" }, headers: null };
   }
 
   try {
@@ -623,12 +487,7 @@ async function proxyToCore(req, endpoint, options = {}) {
     return { ok: response.ok, status: response.status, data, headers: response.headers };
   } catch (err) {
     console.error("❌ Proxy error:", err?.message || err);
-    return {
-      ok: false,
-      status: 500,
-      data: { ok: false, error: "proxy_error", message: err?.message || String(err) },
-      headers: null,
-    };
+    return { ok: false, status: 500, data: { ok: false, error: "proxy_error", message: err?.message || String(err) }, headers: null };
   }
 }
 
@@ -671,14 +530,14 @@ function trimSeenSet(set, maxSize = 1000) {
 async function loadWithdraws({ userId = null, status = null, limit = 100 } = {}) {
   const query = {};
   if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status); // ✅ CORRECTO
+  if (status && status !== "all") query.status = String(status);
   return await Withdraw.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
 async function loadDocuments({ userId = null, status = null, limit = 100 } = {}) {
   const query = {};
   if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status); // ✅ CORRECTO
+  if (status && status !== "all") query.status = String(status);
   return await Document.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
@@ -827,17 +686,10 @@ async function loadTransactionsForUser(userId, limit = 50) {
 
 async function loadWithdrawsForUser(userId, status = "all") {
   const query = { userId: String(userId) };
-
-  // ✅ CLAVE: tus documentos reales usan `status`, NO `Estado`
   if (status && status !== "all") {
     query.status = String(status);
   }
-
-  return await Withdraw.find(query)
-    .sort({ createdAt: -1 })
-    .lean()
-    .exec()
-    .catch(() => []);
+  return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []);
 }
 
 async function recordTransaction({
@@ -947,30 +799,18 @@ let zohoSyncLock = false;
 const zohoQueue = new Set();
 
 function zohoReady() {
-  return !!(ZOHO_ENABLED && ZOHO_CLIENT_ID && ZOHO_CLIENT_SECRET && ZOHO_REFRESH_TOKEN);
+  return !!(process.env.ZOHO_ENABLED !== "false" && process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET && process.env.ZOHO_REFRESH_TOKEN);
 }
 
 async function getZohoAccessToken() {
-  if (!zohoReady()) return null;
-
+  if (!zohoReady() || !fetchFn) return null;
   const now = Date.now();
-  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30_000) {
-    return zohoAccessTokenCache;
-  }
+  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30_000) return zohoAccessTokenCache;
 
-  const url =
-    `${ZOHO_ACCOUNTS_URL}/oauth/v2/token` +
-    `?refresh_token=${encodeURIComponent(ZOHO_REFRESH_TOKEN)}` +
-    `&client_id=${encodeURIComponent(ZOHO_CLIENT_ID)}` +
-    `&client_secret=${encodeURIComponent(ZOHO_CLIENT_SECRET)}` +
-    `&grant_type=refresh_token`;
-
+  const url = `${(process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "")}/oauth/v2/token?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}&client_id=${encodeURIComponent(process.env.ZOHO_CLIENT_ID)}&client_secret=${encodeURIComponent(process.env.ZOHO_CLIENT_SECRET)}&grant_type=refresh_token`;
   const response = await fetchFn(url, { method: "POST" });
   const data = await response.json().catch(() => ({}));
-
-  if (!response.ok || !data?.access_token) {
-    throw new Error(`Zoho token error: ${data?.error || data?.error_description || response.statusText}`);
-  }
+  if (!response.ok || !data?.access_token) throw new Error(`Zoho token error: ${data?.error || data?.error_description || response.statusText}`);
 
   zohoAccessTokenCache = data.access_token;
   const expiresInSec = Number(data.expires_in || 3600);
@@ -980,11 +820,8 @@ async function getZohoAccessToken() {
 
 async function zohoRequest(pathname, options = {}) {
   const token = await getZohoAccessToken();
-  if (!token) {
-    throw new Error("Zoho no configurado");
-  }
-
-  const res = await fetchFn(`${ZOHO_API_BASE_URL}/crm/v8${pathname}`, {
+  if (!token) throw new Error("Zoho no configurado");
+  const res = await fetchFn(`${(process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "")}/crm/v8${pathname}`, {
     method: options.method || "GET",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -993,15 +830,9 @@ async function zohoRequest(pathname, options = {}) {
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
-
   const text = await res.text();
   let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   return { ok: res.ok, status: res.status, data };
 }
 
@@ -1079,13 +910,12 @@ async function getExistingZohoIdForUser(userDoc) {
   if (userDoc?.zohoLeadId) return { module: "Leads", id: userDoc.zohoLeadId };
   if (userDoc?.zohoContactId) return { module: "Contacts", id: userDoc.zohoContactId };
 
-  if (userDoc?.email) {
+  if (userDoc?.email && zohoReady()) {
     try {
-      const crit = encodeURIComponent(`(${ZOHO_EMAIL_FIELD}:equals:${userDoc.email})`);
+      const crit = encodeURIComponent(`(${process.env.ZOHO_EMAIL_FIELD || "Email"}:equals:${userDoc.email})`);
       const leadSearch = await zohoRequest(`/Leads/search?criteria=${crit}`);
       const leadId = leadSearch?.data?.data?.[0]?.id;
       if (leadId) return { module: "Leads", id: leadId };
-
       const contactSearch = await zohoRequest(`/Contacts/search?criteria=${crit}`);
       const contactId = contactSearch?.data?.data?.[0]?.id;
       if (contactId) return { module: "Contacts", id: contactId };
@@ -1102,52 +932,33 @@ function buildZohoPayload(userDoc) {
   const address = String(userDoc.address || "").trim();
   const phone = String(userDoc.phone || "").trim();
   const email = String(userDoc.email || "").trim().toLowerCase();
-
   return {
-    [ZOHO_FIRST_NAME_FIELD]: firstName || "Cliente",
-    [ZOHO_LAST_NAME_FIELD]: lastName || fullName || "Cliente",
-    [ZOHO_EMAIL_FIELD]: email || undefined,
-    [ZOHO_PHONE_FIELD]: phone || undefined,
-    [ZOHO_ADDRESS_FIELD]: address || undefined,
-    [ZOHO_COMPANY_FIELD]: "Leones Broker",
+    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]: firstName || "Cliente",
+    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]: lastName || fullName || "Cliente",
+    [process.env.ZOHO_EMAIL_FIELD || "Email"]: email || undefined,
+    [process.env.ZOHO_PHONE_FIELD || "Phone"]: phone || undefined,
+    [process.env.ZOHO_ADDRESS_FIELD || "Street"]: address || undefined,
+    [process.env.ZOHO_COMPANY_FIELD || "Company"]: "Leones Broker",
     Description: `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.`,
   };
 }
 
 async function createOrUpdateZohoRecord(userDoc) {
-  if (!zohoReady()) {
-    return { ok: false, skipped: true, reason: "zoho_not_configured" };
-  }
-
+  if (!zohoReady()) return { ok: false, skipped: true, reason: "zoho_not_configured" };
   const payload = buildZohoPayload(userDoc);
   const existing = await getExistingZohoIdForUser(userDoc);
-
   if (existing?.id) {
-    const update = await zohoRequest(`/${existing.module}/${existing.id}`, {
-      method: "PUT",
-      body: { data: [payload] },
-    });
+    const update = await zohoRequest(`/${existing.module}/${existing.id}`, { method: "PUT", body: { data: [payload] } });
     if (update.ok) return { ok: true, action: "updated", module: existing.module, data: update.data };
   }
 
-  let moduleToUse = ZOHO_MODULE || "Leads";
-  let create = await zohoRequest(`/${moduleToUse}`, {
-    method: "POST",
-    body: { data: [payload] },
-  });
-
-  if (!create.ok && moduleToUse !== ZOHO_FALLBACK_MODULE) {
-    moduleToUse = ZOHO_FALLBACK_MODULE;
-    create = await zohoRequest(`/${moduleToUse}`, {
-      method: "POST",
-      body: { data: [payload] },
-    });
+  let moduleToUse = process.env.ZOHO_MODULE || "Leads";
+  let create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } });
+  if (!create.ok && moduleToUse !== (process.env.ZOHO_FALLBACK_MODULE || "Contacts")) {
+    moduleToUse = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+    create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } });
   }
-
-  if (!create.ok) {
-    throw new Error(JSON.stringify(create.data || { msg: "Zoho create failed" }));
-  }
-
+  if (!create.ok) throw new Error(JSON.stringify(create.data || { msg: "Zoho create failed" }));
   const record = create.data?.data?.[0];
   const zohoId = record?.details?.id || record?.id || "";
   return { ok: true, action: "created", module: moduleToUse, zohoId, data: create.data };
@@ -1155,10 +966,8 @@ async function createOrUpdateZohoRecord(userDoc) {
 
 async function syncUserToZohoAndMark(userDoc) {
   if (!userDoc) return null;
-
   try {
     const zoho = await createOrUpdateZohoRecord(userDoc);
-
     if (zoho?.ok) {
       userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
       if (zoho.module === "Leads" && zoho.zohoId) userDoc.zohoLeadId = zoho.zohoId;
@@ -1170,7 +979,6 @@ async function syncUserToZohoAndMark(userDoc) {
       await userDoc.save().catch(() => null);
       return zoho;
     }
-
     return zoho;
   } catch (err) {
     userDoc.zohoSyncStatus = "error";
@@ -1184,8 +992,8 @@ async function syncUserToZohoAndMark(userDoc) {
 
 async function fetchCoreUsersOnce() {
   if (!CORE_API_URL || !fetchFn) return [];
-
-  for (const endpoint of CORE_USERS_ENDPOINTS) {
+  const endpoints = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers").split(",").map((s) => s.trim()).filter(Boolean);
+  for (const endpoint of endpoints) {
     try {
       const response = await fetchFn(buildCoreUrl(endpoint), {
         method: "GET",
@@ -1196,63 +1004,39 @@ async function fetchCoreUsersOnce() {
           authorization: `Bearer ${JWT_SECRET}`,
         },
       });
-
       if (!response.ok) continue;
-
       const data = await response.json().catch(() => null);
-      const arr = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.users)
-        ? data.users
-        : Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.result)
-        ? data.result
-        : [];
-
+      const arr = Array.isArray(data) ? data : Array.isArray(data?.users) ? data.users : Array.isArray(data?.data) ? data.data : Array.isArray(data?.result) ? data.result : [];
       if (arr.length) return arr;
     } catch (err) {
       console.warn(`fetchCoreUsersOnce fail ${endpoint}:`, err?.message || err);
     }
   }
-
   return [];
 }
 
 async function syncCoreUsersToLocalAndZoho() {
   if (zohoSyncLock) return { ok: false, skipped: true, reason: "sync_locked" };
   zohoSyncLock = true;
-
   try {
     const coreUsers = await fetchCoreUsersOnce();
-    if (!Array.isArray(coreUsers) || coreUsers.length === 0) {
-      return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
-    }
-
+    if (!Array.isArray(coreUsers) || coreUsers.length === 0) return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
     let created = 0;
     let updated = 0;
     let zohoCount = 0;
     const errors = [];
-
     for (const raw of coreUsers) {
       const before = await User.findOne(
-        raw?.email
-          ? { email: String(raw.email).trim().toLowerCase() }
-          : raw?.id || raw?._id
-          ? { sourceId: String(raw.id || raw._id) }
-          : null
+        raw?.email ? { email: String(raw.email).trim().toLowerCase() } : raw?.id || raw?._id ? { sourceId: String(raw.id || raw._id) } : null
       ).catch(() => null);
-
       const doc = await upsertLocalUserFromCore(raw);
       if (!doc) continue;
       if (!before) created += 1;
       else updated += 1;
-
       const z = await syncUserToZohoAndMark(doc);
       if (z?.ok) zohoCount += 1;
       if (z?.error) errors.push({ email: doc.email, error: z.error });
     }
-
     return { ok: true, synced: coreUsers.length, created, updated, zoho: zohoCount, errors };
   } finally {
     zohoSyncLock = false;
@@ -1274,14 +1058,11 @@ async function ensureInitialCoreSync() {
   }
 }
 
-setTimeout(() => {
-  ensureInitialCoreSync();
-}, 3000);
-
-if (ZOHO_SYNC_INTERVAL_MS > 0) {
+setTimeout(() => { ensureInitialCoreSync(); }, 3000);
+if (Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000) > 0) {
   setInterval(() => {
     syncCoreUsersToLocalAndZoho().catch((e) => console.warn("sync interval error:", e?.message || e));
-  }, ZOHO_SYNC_INTERVAL_MS).unref();
+  }, Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000)).unref();
 }
 
 /* ======================================================
@@ -1290,11 +1071,8 @@ if (ZOHO_SYNC_INTERVAL_MS > 0) {
 async function localDeposit({ userId, amount, leverage, note, currency = "USD" }) {
   const user = await User.findById(userId).catch(() => null);
   if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
   const numericAmount = Math.abs(normalizeNumber(amount, 0));
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
-  }
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
 
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
@@ -1336,7 +1114,6 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
 
   const account = await buildAccountForUser(user);
   emitStateUpdates(user._id, account, null, tx);
-
   return {
     ok: true,
     status: 200,
@@ -1357,18 +1134,12 @@ async function localDeposit({ userId, amount, leverage, note, currency = "USD" }
 async function localWithdraw({ userId, amount, note, force = false }) {
   const user = await User.findById(userId).catch(() => null);
   if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
   const numericAmount = Math.abs(normalizeNumber(amount, 0));
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-    return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
-  }
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) return { ok: false, status: 400, data: { ok: false, msg: "amount inválido" } };
 
   const wallet = await getWalletDocForUser(user._id);
   const before = Number(wallet.balanceOwn ?? wallet.balance ?? user.balance ?? 0) || 0;
-
-  if (!force && before < numericAmount) {
-    return { ok: false, status: 400, data: { ok: false, msg: "Saldo insuficiente" } };
-  }
+  if (!force && before < numericAmount) return { ok: false, status: 400, data: { ok: false, msg: "Saldo insuficiente" } };
 
   const after = force ? Math.max(0, before - numericAmount) : before - numericAmount;
   wallet.balanceOwn = after;
@@ -1397,7 +1168,6 @@ async function localWithdraw({ userId, amount, note, force = false }) {
 
   const account = await buildAccountForUser(user);
   emitStateUpdates(user._id, account, null, tx);
-
   return {
     ok: true,
     status: 200,
@@ -1417,7 +1187,6 @@ async function localWithdraw({ userId, amount, note, force = false }) {
 async function depositByDelta(req, res, userId, desiredBalance, leverage, note) {
   const user = await User.findById(userId).catch(() => null);
   if (!user) return { ok: false, status: 404, data: { ok: false, msg: "Usuario no encontrado" } };
-
   const wallet = await getWalletDocForUser(user._id);
   const currentBalance = getEffectiveBalance(user, wallet.toObject ? wallet.toObject() : wallet);
   const targetBalance = Math.max(0, normalizeNumber(desiredBalance, currentBalance));
@@ -1449,7 +1218,6 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 
   if (delta < 0) {
     const before = currentBalance;
-
     wallet.balanceOwn = targetBalance;
     wallet.balance = targetBalance;
     wallet.equity = targetBalance;
@@ -1457,7 +1225,6 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
     wallet.marginLevel = Number(wallet.marginUsed ?? 0) > 0 ? (wallet.equity / wallet.marginUsed) * 100 : 0;
     wallet.updatedAt = new Date();
     await wallet.save();
-
     user.balance = targetBalance;
     user.updatedAt = new Date();
     await user.save();
@@ -1528,145 +1295,68 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
     const { email, password } = req.body || {};
-
-    if (!email || !password) {
-      return res.status(400).json({
-        ok: false,
-        msg: "Datos incompletos",
-      });
-    }
-
-    if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) {
-      return res.status(500).json({
-        ok: false,
-        msg: "Servidor admin mal configurado",
-      });
-    }
-
-    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) {
-      return res.status(401).json({
-        ok: false,
-        msg: "Credenciales inválidas",
-      });
-    }
-
+    if (!email || !password) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+    if (!ADMIN_EMAIL || !ADMIN_PASS || !JWT_SECRET) return res.status(500).json({ ok: false, msg: "Servidor admin mal configurado" });
+    if (email !== ADMIN_EMAIL || password !== ADMIN_PASS) return res.status(401).json({ ok: false, msg: "Credenciales inválidas" });
     const token = signAdminToken({ email });
-
     res.cookie("admin_token", token, {
       httpOnly: true,
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
       secure: process.env.NODE_ENV === "production",
       maxAge: 8 * 60 * 60 * 1000,
     });
-
-    return res.json({
-      ok: true,
-      token,
-      msg: "Login correcto",
-      admin: {
-        email,
-        role: "admin",
-      },
-    });
+    return res.json({ ok: true, token, msg: "Login correcto", admin: { email, role: "admin" } });
   } catch (err) {
     console.error("admin login error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error del servidor",
-    });
+    return res.status(500).json({ ok: false, msg: "Error del servidor" });
   }
 });
 
 /* ======================================================
    SYNC CORE
 ====================================================== */
-app.post("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
+app.post("/api/admin/sync-core", ensureAdminAuth, async (_req, res) => {
   try {
     const result = await syncCoreUsersToLocalAndZoho();
-
-    return res.json({
-      ok: true,
-      ...result,
-    });
+    return res.json({ ok: true, ...result });
   } catch (err) {
     console.error("sync-core error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error sincronizando core",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
   }
 });
 
-app.get("/api/admin/sync-core", ensureAdminAuth, async (req, res) => {
+app.get("/api/admin/sync-core", ensureAdminAuth, async (_req, res) => {
   try {
     const result = await syncCoreUsersToLocalAndZoho();
-
-    return res.json({
-      ok: true,
-      ...result,
-    });
+    return res.json({ ok: true, ...result });
   } catch (err) {
     console.error("sync-core error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error sincronizando core",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ ok: false, msg: "Error sincronizando core", error: err?.message || String(err) });
   }
 });
 
 /* ======================================================
    USERS
 ====================================================== */
-app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (req, res) => {
+app.get(["/api/admin/users", "/api/users"], ensureAdminAuth, async (_req, res) => {
   try {
-    const users = await User.find({})
-      .select("-password -verificationToken -__v")
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec()
-      .catch(() => []);
-
+    const users = await User.find({}).select("-password -verificationToken -__v").sort({ createdAt: -1 }).lean().exec().catch(() => []);
     return res.json(users);
   } catch (err) {
     console.error("GET users error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error al listar usuarios",
-    });
+    return res.status(500).json({ ok: false, msg: "Error al listar usuarios" });
   }
 });
 
 app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => {
   try {
     const user = await User.findById(req.params.id).catch(() => null);
-
-    if (!user) {
-      return res.status(404).json({
-        ok: false,
-        msg: "Usuario no encontrado",
-      });
-    }
-
+    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
     const result = await syncUserToZohoAndMark(user);
-
-    return res.json({
-      ok: true,
-      result,
-    });
+    return res.json({ ok: true, result });
   } catch (err) {
     console.error("sync single zoho error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error sincronizando con Zoho",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ ok: false, msg: "Error sincronizando con Zoho", error: err?.message || String(err) });
   }
 });
 
@@ -1677,20 +1367,11 @@ app.get(["/api/admin/account/:userId", "/api/account/:userId"], ensureAdminAuth,
   try {
     const user = await getTargetUserForAdmin(req, res);
     if (!user) return;
-
     const payload = await buildAccountForUser(user);
-
-    return res.json({
-      ok: true,
-      ...payload,
-    });
+    return res.json({ ok: true, ...payload });
   } catch (err) {
     console.error("GET account error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo cuenta",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
   }
 });
 
@@ -1698,20 +1379,11 @@ app.get(["/api/account", "/api/admin/account"], ensureAdminAuth, async (req, res
   try {
     const user = await getTargetUserForAdmin(req, res);
     if (!user) return;
-
     const payload = await buildAccountForUser(user);
-
-    return res.json({
-      ok: true,
-      ...payload,
-    });
+    return res.json({ ok: true, ...payload });
   } catch (err) {
     console.error("GET account error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo cuenta",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
   }
 });
 
@@ -1722,30 +1394,11 @@ app.get("/api/admin/transactions", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-
-    const txs = userId
-      ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({})
-          .sort({ createdAt: -1 })
-          .limit(limit)
-          .lean()
-          .exec()
-          .catch(() => []);
-
-    return res.json({
-      ok: true,
-      count: txs.length,
-      transactions: txs,
-      data: txs,
-      items: txs,
-    });
+    const txs = userId ? await loadTransactionsForUser(userId, limit) : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
+    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
   } catch (err) {
     console.error("/api/admin/transactions error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo transacciones",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
   }
 });
 
@@ -1753,30 +1406,11 @@ app.get("/api/transactions", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
     const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
-
-    const txs = userId
-      ? await loadTransactionsForUser(userId, limit)
-      : await Transaction.find({})
-          .sort({ createdAt: -1 })
-          .limit(limit)
-          .lean()
-          .exec()
-          .catch(() => []);
-
-    return res.json({
-      ok: true,
-      count: txs.length,
-      transactions: txs,
-      data: txs,
-      items: txs,
-    });
+    const txs = userId ? await loadTransactionsForUser(userId, limit) : await Transaction.find({}).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
+    return res.json({ ok: true, count: txs.length, transactions: txs, data: txs, items: txs });
   } catch (err) {
     console.error("/api/transactions error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo transacciones",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo transacciones" });
   }
 });
 
@@ -1797,22 +1431,10 @@ app.get(["/api/admin/withdraws/:userId", "/api/admin/withdrawals/:userId"], ensu
   try {
     const status = req.query.status || "all";
     const data = await loadWithdrawsForUser(req.params.userId, status);
-
-    return res.json({
-      ok: true,
-      count: data.length,
-      withdraws: data,
-      withdrawals: data,
-      data,
-      items: data,
-    });
+    return res.json({ ok: true, count: data.length, withdraws: data, withdrawals: data, data, items: data });
   } catch (err) {
     console.error("GET withdraws error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo retiros",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
   }
 });
 
@@ -1821,158 +1443,71 @@ app.get(["/api/admin/withdraws", "/api/admin/withdrawals"], ensureAdminAuth, asy
     const userId = req.query.userId || null;
     const status = req.query.status || "all";
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-
-    const withdraws = await loadWithdraws({
-      userId,
-      status,
-      limit,
-    });
-
-    return res.json({
-      ok: true,
-      count: withdraws.length,
-      withdraws,
-      withdrawals: withdraws,
-      data: withdraws,
-      items: withdraws,
-    });
+    const withdraws = await loadWithdraws({ userId, status, limit });
+    return res.json({ ok: true, count: withdraws.length, withdraws, withdrawals: withdraws, data: withdraws, items: withdraws });
   } catch (err) {
     console.error("/api/admin/withdraws error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo retiros",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
   }
 });
 
 app.post(["/api/admin/withdraw/approve", "/api/admin/withdrawals/approve"], ensureAdminAuth, async (req, res) => {
   try {
     const { id, adminNote = "" } = req.body || {};
-
-    if (!id) {
-      return res.status(400).json({
-        ok: false,
-        msg: "id requerido",
-      });
-    }
+    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
 
     const w = await Withdraw.findById(id).catch(() => null);
-
-    if (!w) {
-      return res.status(404).json({
-        ok: false,
-        msg: "Retiro no encontrado",
-      });
-    }
+    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
 
     const userId = String(w.userId || "");
     const amount = Number(w.cantidad ?? w.amount ?? 0);
 
     const remote = await proxyToCore(req, "/api/admin/withdraw", {
       method: "POST",
-      body: {
-        userId,
-        amount,
-        note: adminNote || `Aprobación de retiro #${id}`,
-      },
+      body: { userId, amount, note: adminNote || `Aprobación de retiro #${id}` },
     });
 
     if (!remote.ok) {
-      const local = await localWithdraw({
-        userId,
-        amount,
-        note: adminNote || `Aprobación de retiro #${id}`,
-      });
-
-      if (!local.ok) {
-        return res.status(local.status).json(local.data);
-      }
+      const local = await localWithdraw({ userId, amount, note: adminNote || `Aprobación de retiro #${id}` });
+      if (!local.ok) return res.status(local.status).json(local.data);
     } else if (remote.headers) {
       relaySetCookies(remote.headers, res);
     }
 
     w.status = "approved";
-    w.Estado = "aprobado";
     w.adminNote = adminNote;
     w.updatedAt = new Date();
-
     await w.save();
 
-    const payload = {
-      ok: true,
-      id: String(w._id),
-      userId,
-      amount,
-      status: "approved",
-      message: "Retiro aprobado",
-      updatedAt: new Date(),
-    };
-
+    const payload = { ok: true, id: String(w._id), userId, amount, status: "approved", message: "Retiro aprobado", updatedAt: new Date() };
     emitWithdrawUpdate(payload);
-
     return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/approve error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error aprobando retiro",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ ok: false, msg: "Error aprobando retiro", error: err?.message || String(err) });
   }
 });
 
 app.post(["/api/admin/withdraw/reject", "/api/admin/withdrawals/reject"], ensureAdminAuth, async (req, res) => {
   try {
     const { id, adminNote = "" } = req.body || {};
-
-    if (!id) {
-      return res.status(400).json({
-        ok: false,
-        msg: "id requerido",
-      });
-    }
+    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
 
     const w = await Withdraw.findById(id).catch(() => null);
-
-    if (!w) {
-      return res.status(404).json({
-        ok: false,
-        msg: "Retiro no encontrado",
-      });
-    }
+    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
 
     const userId = String(w.userId || "");
-
     w.status = "rejected";
-    w.Estado = "rechazado";
     w.adminNote = adminNote;
     w.updatedAt = new Date();
-
     await w.save();
 
-    const payload = {
-      ok: true,
-      id: String(w._id),
-      userId,
-      amount: Number(w.cantidad ?? w.amount ?? 0),
-      status: "rejected",
-      message: "Retiro rechazado",
-      updatedAt: new Date(),
-    };
-
+    const payload = { ok: true, id: String(w._id), userId, amount: Number(w.cantidad ?? w.amount ?? 0), status: "rejected", message: "Retiro rechazado", updatedAt: new Date() };
     emitWithdrawUpdate(payload);
-
     return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/reject error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error rechazando retiro",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ ok: false, msg: "Error rechazando retiro", error: err?.message || String(err) });
   }
 });
 
@@ -1984,27 +1519,11 @@ app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
     const userId = req.query.userId || null;
     const status = req.query.status || "pending";
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-
-    const documents = await loadDocuments({
-      userId,
-      status,
-      limit,
-    });
-
-    return res.json({
-      ok: true,
-      count: documents.length,
-      documents,
-      data: documents,
-      items: documents,
-    });
+    const documents = await loadDocuments({ userId, status, limit });
+    return res.json({ ok: true, count: documents.length, documents, data: documents, items: documents });
   } catch (err) {
     console.error("/api/admin/documents error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo documentos",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos" });
   }
 });
 
@@ -2012,27 +1531,11 @@ app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
   try {
     const status = req.query.status || "all";
     const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-
-    const documents = await loadDocuments({
-      userId: req.params.userId,
-      status,
-      limit,
-    });
-
-    return res.json({
-      ok: true,
-      count: documents.length,
-      documents,
-      data: documents,
-      items: documents,
-    });
+    const documents = await loadDocuments({ userId: req.params.userId, status, limit });
+    return res.json({ ok: true, count: documents.length, documents, data: documents, items: documents });
   } catch (err) {
     console.error("/api/admin/documents/:userId error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error obteniendo documentos del usuario",
-    });
+    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos del usuario" });
   }
 });
 
@@ -2042,38 +1545,21 @@ app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
 app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
-
-    if (!userId || leverage === undefined || leverage === null || leverage === "") {
-      return res.status(400).json({ msg: "Datos incompletos" });
-    }
-
+    if (!userId || leverage === undefined || leverage === null || leverage === "") return res.status(400).json({ msg: "Datos incompletos" });
     const user = await User.findById(userId).catch(() => null);
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
     const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) {
-      return res.status(400).json({ msg: "Leverage inválido" });
-    }
-
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
     const wallet = await getWalletDocForUser(user._id);
     wallet.leverageFactor = lev;
     wallet.updatedAt = new Date();
     await wallet.save();
-
     user.leverage = lev;
     user.updatedAt = new Date();
     await user.save();
-
     const account = await buildAccountForUser(user);
     emitStateUpdates(userId, account, null, null);
-
-    return res.json({
-      ok: true,
-      msg: "Leverage actualizado",
-      leverage: lev,
-      account: account.account,
-      wallet: account.wallet,
-    });
+    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
   } catch (err) {
     console.error("/api/admin/update-leverage error:", err);
     return res.status(500).json({ msg: "Error actualizando leverage" });
@@ -2084,33 +1570,19 @@ app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
   try {
     const { leverage } = req.body || {};
     const user = await User.findById(req.params.id).catch(() => null);
-
     if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
     const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) {
-      return res.status(400).json({ msg: "Leverage inválido" });
-    }
-
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
     const wallet = await getWalletDocForUser(user._id);
     wallet.leverageFactor = lev;
     wallet.updatedAt = new Date();
     await wallet.save();
-
     user.leverage = lev;
     user.updatedAt = new Date();
     await user.save();
-
     const account = await buildAccountForUser(user);
     emitStateUpdates(String(user._id), account, null, null);
-
-    return res.json({
-      ok: true,
-      msg: "Leverage actualizado (PUT)",
-      leverage: lev,
-      account: account.account,
-      wallet: account.wallet,
-    });
+    return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet });
   } catch (err) {
     console.error("PUT /admin/users/leverage/:id error:", err);
     return res.status(500).json({ msg: "Error actualizando leverage" });
@@ -2123,20 +1595,11 @@ app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
 app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, balance, leverage, note } = req.body || {};
-
-    if (!userId) {
-      return res.status(400).json({ ok: false, msg: "userId requerido" });
-    }
-
+    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
     const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
-
     if (result?.headers) relaySetCookies(result.headers, res);
-
     if (result && result.ok) return res.status(result.status).json(result.data);
-
-    return res.status(result?.status || 500).json(
-      result?.data || { ok: false, msg: "Error actualizando saldo" }
-    );
+    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
   } catch (err) {
     console.error("/api/admin/update-balance error:", err);
     return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
@@ -2149,51 +1612,27 @@ app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, 
 app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, amount, leverage, note, currency } = req.body || {};
-
-    if (!userId || amount === undefined || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
+    if (!userId || amount === undefined || amount === null || amount === "") return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
     const numericAmount = normalizeNumber(amount);
-
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ ok: false, error: "amount inválido" });
 
     const remote = await proxyToCore(req, "/api/admin/deposit", {
       method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Admin deposit",
-        currency: currency || "USD",
-      },
+      body: { userId, amount: numericAmount, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Admin deposit", currency: currency || "USD" },
     });
 
     if (remote.ok) {
       if (remote.headers) relaySetCookies(remote.headers, res);
-
       const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
       const account = remote.data?.data?.account || remote.data?.account || null;
       const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
       const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-
       emitStateUpdates(userId, { account, wallet }, null, tx);
-
       if (balance !== null) io.emit(`balance:${userId}`, balance);
-
       return res.status(remote.status).json(remote.data);
     }
 
-    const local = await localDeposit({
-      userId,
-      amount: numericAmount,
-      leverage: leverage !== undefined ? Number(leverage) : undefined,
-      note: note || "Admin deposit",
-      currency: currency || "USD",
-    });
-
+    const local = await localDeposit({ userId, amount: numericAmount, leverage: leverage !== undefined ? Number(leverage) : undefined, note: note || "Admin deposit", currency: currency || "USD" });
     return res.status(local.status).json(local.data);
   } catch (err) {
     console.error("/api/admin/deposit error:", err);
@@ -2204,90 +1643,624 @@ app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, re
 app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, amount, note } = req.body || {};
-
-    if (!userId || amount === undefined || amount === null || amount === "") {
-      return res.status(400).json({
-        ok: false,
-        error: "userId y amount son requeridos",
-      });
-    }
-
+    if (!userId || amount === undefined || amount === null || amount === "") return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
     const numericAmount = normalizeNumber(amount);
-
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({
-        ok: false,
-        error: "amount inválido",
-      });
-    }
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return res.status(400).json({ ok: false, error: "amount inválido" });
 
     const remote = await proxyToCore(req, "/api/admin/withdraw", {
       method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        note: note || "Admin withdrawal",
-      },
+      body: { userId, amount: numericAmount, note: note || "Admin withdrawal" },
     });
 
     if (remote.ok) {
-      if (remote.headers) {
-        relaySetCookies(remote.headers, res);
-      }
-
+      if (remote.headers) relaySetCookies(remote.headers, res);
       const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
       const account = remote.data?.data?.account || remote.data?.account || null;
       const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
       const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-
       emitStateUpdates(userId, { account, wallet }, null, tx);
-
-      if (balance !== null) {
-        io.emit(`balance:${userId}`, balance);
-      }
-
-      const payload = {
-        ok: true,
-        userId: String(userId),
-        amount: numericAmount,
-        status: "approved",
-        message: "Retiro aprobado",
-        updatedAt: new Date(),
-      };
-
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+      const payload = { ok: true, userId: String(userId), amount: numericAmount, status: "approved", message: "Retiro aprobado", updatedAt: new Date() };
       emitWithdrawUpdate(payload);
-
       return res.status(remote.status).json(remote.data);
     }
 
-    const local = await localWithdraw({
-      userId,
-      amount: numericAmount,
-      note: note || "Admin withdrawal",
-    });
-
+    const local = await localWithdraw({ userId, amount: numericAmount, note: note || "Admin withdrawal" });
     return res.status(local.status).json(local.data);
   } catch (err) {
     console.error("/api/admin/withdraw error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error retiro",
-    });
+    return res.status(500).json({ ok: false, msg: "Error retiro" });
   }
 });
 
 /* ======================================================
-   SERVER START
+   CLIENT WITHDRAW REQUEST
 ====================================================== */
-app.use(express.static(path.join(__dirname, "public")));
+app.post("/api/withdraw/request", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
 
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "admin.html"));
+    const body = req.body || {};
+    const amount = Number(body.amount || 0);
+    const method = String(body.method || body.withdrawMethod || "USDT").trim();
+    const walletAddress = String(body.walletAddress || body.address || "").trim();
+    const note = String(body.note || "").trim();
+
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ ok: false, error: "invalid_amount" });
+    if (!walletAddress) return res.status(400).json({ ok: false, error: "wallet_required" });
+
+    const wallet = await getWalletDocForUser(user._id);
+    const balance = Number(wallet.balanceOwn ?? wallet.balance ?? 0);
+    if (amount > balance) return res.status(400).json({ ok: false, error: "insufficient_balance" });
+
+    const withdraw = await Withdraw.create({
+      userId: String(user._id),
+      amount,
+      method,
+      walletAddress,
+      note,
+      status: "pending",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    console.log("✅ WITHDRAW CREATED:", withdraw._id);
+    io.emit("withdraw:new", { withdraw: withdraw.toObject ? withdraw.toObject() : withdraw });
+
+    return res.json({ ok: true, message: "Retiro enviado", withdraw });
+  } catch (err) {
+    console.error("❌ /api/withdraw/request:", err);
+    return res.status(500).json({ ok: false, error: "server_error", message: err?.message || "Error interno" });
+  }
 });
 
-const PORT = process.env.PORT || 10000;
+/* ======================================================
+   DOCUMENT UPLOAD STORAGE
+====================================================== */
+app.post("/api/documents", uploadDocument.single("document"), async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    if (!req.file) return res.status(400).json({ ok: false, error: "Documento requerido" });
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ Server running on port ${PORT}`);
+    const document = await Document.create({
+      userId: String(user._id),
+      type: req.body.type || "identity",
+      documentUrl: "/uploads/documents/" + req.file.filename,
+      fileName: req.file.originalname || req.file.filename,
+      mimeType: req.file.mimetype || "",
+      status: "pending",
+      adminNote: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    io.emit("document:new", { document: document.toObject ? document.toObject() : document });
+    return res.json({ ok: true, document });
+  } catch (err) {
+    console.error("DOCUMENT UPLOAD ERROR:", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
 });
+
+app.post("/api/documents/upload", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const { type, documentUrl } = req.body || {};
+    if (!documentUrl || typeof documentUrl !== "string") return res.status(400).json({ ok: false, error: "documentUrl_required" });
+    const doc = await Document.create({
+      userId: String(user._id),
+      type: type || "identity",
+      documentUrl,
+      status: "pending",
+      adminNote: "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    io.emit("document:new", { document: doc.toObject ? doc.toObject() : doc });
+    return res.json({ ok: true, msg: "Documento subido", document: doc });
+  } catch (err) {
+    console.error("/api/documents/upload error:", err);
+    return res.status(500).json({ ok: false, error: "server_error", message: err?.message || "Error interno" });
+  }
+});
+
+/* ======================================================
+   MARKET / ACCOUNT / POSITIONS / TRADE / PRICE
+====================================================== */
+const simulatedPrices = new Map();
+function generateBasePrice(symbol = "") {
+  const s = String(symbol).toUpperCase();
+  if (s.includes("BTC")) return 65000 + Math.random() * 5000;
+  if (s.includes("ETH")) return 3000 + Math.random() * 300;
+  if (s.includes("XAU")) return 2300 + Math.random() * 50;
+  if (s.includes("NVDA")) return 900 + Math.random() * 100;
+  if (s.includes("AAPL")) return 180 + Math.random() * 20;
+  if (s.includes("TSLA")) return 200 + Math.random() * 50;
+  return 50 + Math.random() * 500;
+}
+function getSimulatedPrice(symbol) {
+  symbol = String(symbol || "").toUpperCase().trim();
+  if (!simulatedPrices.has(symbol)) simulatedPrices.set(symbol, generateBasePrice(symbol));
+  let current = simulatedPrices.get(symbol);
+  const movement = (Math.random() - 0.5) * (current * 0.01);
+  current += movement;
+  if (current <= 0) current = generateBasePrice(symbol);
+  simulatedPrices.set(symbol, current);
+  return Number(current.toFixed(2));
+}
+
+app.get("/api/price", async (req, res) => {
+  try {
+    const rawSymbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "");
+    const symbol = String(rawSymbol || "").trim().toUpperCase();
+    if (!symbol) return res.status(400).json({ ok: false, error: "Símbolo requerido" });
+    const price = getSimulatedPrice(symbol);
+    return res.json({ ok: true, simulated: true, symbol, price });
+  } catch (err) {
+    console.error("❌ PRICE ERROR:", err);
+    return res.json({ ok: true, simulated: true, symbol: "FALLBACK", price: 100 });
+  }
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || "dev",
+    emailProvider: process.env.RESEND_API_KEY ? "resend" : process.env.EMAIL_USER || process.env.SMTP_USER ? "smtp" : "none",
+    db: mongoose.connection.name || null,
+    adminApiKeyConfigured: !!process.env.ADMIN_API_KEY,
+  });
+});
+
+app.locals.sendVerificationEmail = async ({ user, verificationLink }) => {
+  try {
+    const to = user?.email || user?.address || user;
+    if (!to) return { ok: false, error: "missing_recipient" };
+    if (!verificationLink) return { ok: false, error: "missing_verification_link" };
+    const name = user?.name || "usuario";
+    return await sendEmail({
+      to,
+      subject: "Verifica tu cuenta - Leones Broker",
+      html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111"><h2>Hola ${name}, verifica tu cuenta</h2><p>Haz clic en el botón de abajo para activar tu cuenta:</p><p><a href="${verificationLink}" style="display:inline-block;background:#d4af37;color:#000;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold">Verificar cuenta</a></p><p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p><p>${verificationLink}</p></div>`,
+    });
+  } catch (err) {
+    console.error("[MAIL] sendVerificationEmail error:", err?.message || err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+};
+
+app.post("/api/_send_test_email", async (req, res) => {
+  const to = (req.body && req.body.to) || process.env.SENDER_EMAIL;
+  if (!to) return res.status(400).json({ ok: false, message: "Necesitas enviar 'to' en el body o configurar SENDER_EMAIL" });
+  const subject = req.body.subject || "Prueba de correo - Leones Broker";
+  const html = req.body.html || `<p>Esto es una prueba desde el servidor de Leones Broker. Si recibes este correo, Resend/SMTP está funcionando.</p>`;
+  try {
+    const r = await sendEmail({ to, subject, html });
+    if (r.ok) return res.json({ ok: true, message: "Correo enviado", provider: r.provider, result: r.result || r.info || r.resp });
+    return res.status(500).json({ ok: false, message: "No se pudo enviar correo", error: r.error });
+  } catch (err) {
+    console.error("test email error:", err);
+    return res.status(500).json({ ok: false, message: "Error interno enviando correo", error: err && err.message ? err.message : String(err) });
+  }
+});
+
+app.get("/api/markets", (req, res) => res.json({ markets: ["Crypto", "Stocks", "Forex", "Indices", "Futures", "Bonds"] }));
+app.get("/api/market/list", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+app.get("/api/market/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+app.get("/api/markets/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+app.get("/api/api/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+app.get("/api/api/markets", (req, res) => res.json({ markets: ["Crypto", "Stocks", "Forex", "Indices"] }));
+
+try {
+  if (typeof marketRoutesFactory === "function") {
+    app.use("/api/market", marketRoutesFactory({ polygonSocket: null, priceHandler: new PriceHandler(io) }));
+  } else if (marketRoutesFactory) {
+    app.use("/api/market", marketRoutesFactory);
+  }
+} catch (e) {
+  console.warn("No se pudo montar /api/market:", e && e.message ? e.message : e);
+}
+
+app.get("/api/quotes", async (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }]));
+app.get("/api/latest", async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "").trim().toUpperCase();
+    if (!symbol) return res.json({ ok: true, symbol: null, price: null, currentPrice: null, close: null, last: null, updatedAt: new Date().toISOString(), message: "symbol_missing" });
+    const price = getSimulatedPrice(symbol);
+    return res.json({ ok: true, symbol, price, currentPrice: price, close: price, last: price, updatedAt: new Date().toISOString() });
+  } catch (e) {
+    console.error("/api/latest error:", e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+app.get("/api/market/quotes", async (req, res) => res.json({ ok: true, quotes: [{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }] }));
+app.get("/api/market/latest", async (req, res) => {
+  try {
+    const symbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "").trim().toUpperCase();
+    if (!symbol) return res.json({ ok: true, symbol: null, price: null, currentPrice: null, close: null, last: null, updatedAt: new Date().toISOString(), message: "symbol_missing" });
+    const price = getSimulatedPrice(symbol);
+    return res.json({ ok: true, symbol, price, currentPrice: price, close: price, last: price, updatedAt: new Date().toISOString() });
+  } catch (e) {
+    console.error("/api/market/latest error:", e);
+    return res.status(500).json({ ok: false, error: "server_error" });
+  }
+});
+app.get("/api/market/polygon/quotes", async (req, res) => res.json({ ok: true, quotes: [{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }] }));
+app.get("/api/market/polygon/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+app.get("/api/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
+
+app.get("/api/account", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    return res.json(await buildAccountForUser(user));
+  } catch (e) {
+    console.error("account error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/me", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    return res.status(200).json(await buildAccountForUser(user));
+  } catch (e) {
+    console.error("/api/me error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/profile", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    return res.json(await buildAccountForUser(user));
+  } catch (e) {
+    console.error("profile error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/cuenta", (req, res) => res.redirect(307, "/api/account"));
+app.get("/api/transactions", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
+    const transactions = await loadTransactionsForUser(user._id, limit);
+    return res.json({ ok: true, count: transactions.length, transactions, data: transactions, items: transactions });
+  } catch (e) {
+    console.error("/api/transactions error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/wallet", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const payload = await buildAccountForUser(user);
+    return res.json({ ok: true, wallet: payload.wallet, account: payload.account, balance: payload.account.balance, balanceOwn: payload.account.balanceOwn, availableBalance: payload.account.availableBalance, equity: payload.account.equity, marginUsed: payload.account.marginUsed, freeMargin: payload.account.freeMargin, marginLevel: payload.account.marginLevel, leverageFactor: payload.account.leverageFactor, currency: payload.account.currency, transactions: payload.transactions });
+  } catch (e) {
+    console.error("/api/wallet error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/billetera", (req, res) => res.redirect(307, "/api/wallet"));
+app.get("/api/positions", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const positions = await safeLoadOpenPositionsForUser(user._id);
+    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
+  } catch (e) {
+    console.error("/api/positions error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/posiciones", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const positions = await safeLoadOpenPositionsForUser(user._id);
+    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
+  } catch (e) {
+    console.error("/api/posiciones error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/positions/all", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const positions = await safeLoadAllPositionsForUser(user._id);
+    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
+  } catch (e) {
+    console.error("/api/positions/all error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/posiciones/all", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const positions = await safeLoadAllPositionsForUser(user._id);
+    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
+  } catch (e) {
+    console.error("/api/posiciones/all error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+app.get("/api/trade/positions", async (req, res) => {
+  try {
+    const user = await getUserDocFromBearer(req);
+    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
+    const positions = await safeLoadOpenPositionsForUser(user._id);
+    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
+  } catch (e) {
+    console.error("/api/trade/positions error", e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+/* ======================================================
+   SOCKET.IO
+====================================================== */
+io.on("connection", (socket) => {
+  console.log("✅ socket connected", socket.id);
+  try { socket.emit("prices_snapshot", { BTCUSDT: { price: getSimulatedPrice("BTCUSDT") } }); } catch { socket.emit("prices_snapshot", {}); }
+
+  socket.on("request_withdraws", async (filters = {}) => {
+    try {
+      const withdraws = await loadWithdraws({ userId: filters.userId || null, status: filters.status || "all", limit: Math.min(Number(filters.limit || 100) || 100, 500) });
+      socket.emit("withdraws_snapshot", { ok: true, count: withdraws.length, withdraws, data: withdraws, items: withdraws });
+      console.log("📤 withdraws_snapshot enviado");
+    } catch (err) {
+      console.error("request_withdraws error:", err);
+      socket.emit("withdraws_snapshot", { ok: false, error: err?.message || "error" });
+    }
+  });
+
+  socket.on("request_documents", async (filters = {}) => {
+    try {
+      const documents = await loadDocuments({ userId: filters.userId || null, status: filters.status || "all", limit: Math.min(Number(filters.limit || 100) || 100, 500) });
+      socket.emit("documents_snapshot", { ok: true, count: documents.length, documents, data: documents, items: documents });
+      console.log("📤 documents_snapshot enviado");
+    } catch (err) {
+      console.error("request_documents error:", err);
+      socket.emit("documents_snapshot", { ok: false, error: err?.message || "error" });
+    }
+  });
+
+  socket.on("join_user_room", (userId) => {
+    if (!userId) return;
+    socket.join(`user:${userId}`);
+    console.log(`👤 socket ${socket.id} joined user:${userId}`);
+  });
+
+  socket.on("join_admin", () => {
+    socket.join("admins");
+    console.log(`🛡️ admin joined: ${socket.id}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ socket disconnected", socket.id);
+  });
+});
+
+/* ======================================================
+   REALTIME HELPERS
+====================================================== */
+async function emitWithdrawUpdate(withdrawId) {
+  try {
+    const withdraw = await Withdraw.findById(withdrawId).lean().catch(() => null);
+    if (!withdraw) return;
+    io.emit("withdraw:update", withdraw);
+    io.to("admins").emit("admin:withdraw:update", withdraw);
+    io.to(`user:${withdraw.userId}`).emit("user:withdraw:update", withdraw);
+    console.log("🚀 withdraw:update emitido", withdrawId);
+  } catch (err) {
+    console.error("emitWithdrawUpdate error:", err);
+  }
+}
+
+async function emitDocumentUpdate(documentId) {
+  try {
+    const document = await Document.findById(documentId).lean().catch(() => null);
+    if (!document) return;
+    io.emit("document:update", document);
+    io.to("admins").emit("admin:document:update", document);
+    io.to(`user:${document.userId}`).emit("user:document:update", document);
+    console.log("🚀 document:update emitido", documentId);
+  } catch (err) {
+    console.error("emitDocumentUpdate error:", err);
+  }
+}
+
+/* ======================================================
+   GET REAL PRICE (FIX REAL)
+====================================================== */
+app.get("/api/price", async (req, res) => {
+  try {
+    const rawSymbol = req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "";
+    const symbol = String(rawSymbol || "").trim().toUpperCase();
+    if (!symbol) return res.status(400).json({ ok: false, error: "Símbolo requerido" });
+    const price = getSimulatedPrice(symbol);
+    return res.json({ ok: true, symbol, price, currentPrice: price, last: price, close: price, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error("Error /api/price:", err);
+    return res.status(500).json({ ok: false, error: "Error interno" });
+  }
+});
+
+app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/verification", verificationRoutes);
+app.use("/api/wallet", walletRoutes);
+app.use("/api/positions", positionsRoutes);
+app.use("/api/trade", tradeRoutes);
+app.use("/api/account", accountRoutes);
+app.use("/api/password", passwordRoutes);
+app.use("/api/withdraws", withdrawRoutes);
+
+app.use("/api/api", (req, res) => {
+  const newUrl = req.originalUrl.replace(/^\/api\/api/, "/api");
+  return res.redirect(307, newUrl);
+});
+
+/* ======================================================
+   API PRICE
+====================================================== */
+
+/* ======================================================
+   STATIC
+====================================================== */
+const staticCandidates = ["public", "publico", "público", "Public", "Publico"];
+let staticDirName = null;
+for (const cand of staticCandidates) {
+  const p = path.join(__dirname, cand);
+  try {
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) { staticDirName = cand; break; }
+  } catch {}
+}
+if (!staticDirName) {
+  staticDirName = "public";
+  console.warn(`WARN: No se encontró carpeta estática entre ${staticCandidates.join(", ")}. Usando fallback '${staticDirName}'.`);
+} else {
+  console.log(`Static folder detected: '${staticDirName}'`);
+}
+
+const staticPath = path.join(__dirname, staticDirName);
+const jsDirPath = path.join(staticPath, "js");
+
+function stripScriptWrappers(source) {
+  let text = String(source ?? "");
+  text = text.replace(/^\uFEFF/, "");
+  const trimmed = text.trim();
+  const startsWithScript = /^<script\b[^>]*>/i.test(trimmed);
+  const endsWithScript = /<\/script>\s*$/.test(trimmed);
+  if (startsWithScript && endsWithScript) {
+    text = trimmed.replace(/^<script\b[^>]*>/i, "").replace(/<\/script>\s*$/, "");
+  }
+  return text;
+}
+
+function resolveJsCandidate(requestPath) {
+  const clean = String(requestPath || "").split("?")[0];
+  const normalized = clean.replace(/\\/g, "/");
+  const base = path.basename(normalized);
+  const candidates = [];
+  if (normalized.startsWith("/public/js/")) candidates.push(path.join(staticPath, normalized.replace(/^\/public\//, "")));
+  if (normalized.startsWith("/js/")) {
+    candidates.push(path.join(jsDirPath, normalized.slice("/js/".length)));
+    candidates.push(path.join(staticPath, normalized.replace(/^\/+/, "")));
+  }
+  if (normalized.startsWith("/public/")) candidates.push(path.join(staticPath, normalized.replace(/^\/public\//, "")));
+  if (base) {
+    candidates.push(path.join(staticPath, base));
+    candidates.push(path.join(jsDirPath, base));
+  }
+  const uniqueCandidates = [...new Set(candidates)];
+  return uniqueCandidates.find((p) => { try { return fs.existsSync(p) && fs.statSync(p).isFile(); } catch { return false; } });
+}
+
+app.use(async (req, res, next) => {
+  const pathname = req.path || "";
+  if (!pathname.endsWith(".js")) return next();
+  try {
+    const candidate = resolveJsCandidate(pathname);
+    if (candidate) {
+      const raw = await fs.promises.readFile(candidate, "utf8");
+      const cleaned = stripScriptWrappers(raw);
+      res.status(200).type("application/javascript; charset=utf-8").send(cleaned);
+      return;
+    }
+    res.status(404).type("application/javascript; charset=utf-8").send(`console.error("JS missing: ${pathname}");`);
+  } catch (err) {
+    console.error("Error sirviendo JS:", err);
+    res.status(500).type("application/javascript; charset=utf-8").send(`console.error("JS server error");`);
+  }
+});
+
+app.use("/public", express.static(staticPath));
+app.use("/js", express.static(jsDirPath));
+app.use(express.static(staticPath));
+
+app.get("*", (req, res) => {
+  if (req.path.startsWith("/api/") || req.path === "/api") {
+    return res.status(404).json({ error: "API endpoint not found" });
+  }
+  const indexPath = path.join(staticPath, "index.html");
+  res.sendFile(indexPath, (err) => {
+    if (err) {
+      console.error("Error sirviendo index.html:", err);
+      res.status(err.status || 500).send("Error loading app");
+    }
+  });
+});
+
+/* =========================
+   START / SHUTDOWN
+   ========================= */
+const serverInstance = server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on ${PORT}`);
+  console.log("ENV STATUS:");
+  console.log("RESEND:", !!process.env.RESEND_API_KEY);
+  console.log("SENDER:", !!process.env.SENDER_EMAIL);
+  console.log("MONGO:", !!process.env.MONGO_URI);
+  console.log("ADMIN_API_KEY:", !!process.env.ADMIN_API_KEY);
+  console.log("POLYGON:", !!process.env.POLYGON_API_KEY);
+  if (!process.env.POLYGON_API_KEY) console.warn("⚠️ POLYGON_API_KEY no configurado — realtime limitado");
+  if (!process.env.RESEND_API_KEY) console.warn("⚠️ Resend no configurado — emails pueden usar SMTP o simulación");
+});
+
+let shuttingDown = false;
+
+const safeClosePolygonSocket = async () => {
+  if (!PolygonSocket) return;
+};
+
+const gracefulShutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`📴 ${signal} recibido. Cerrando...`);
+
+  const timeout = setTimeout(() => {
+    console.warn("Forzando cierre...");
+    process.exit(1);
+  }, 30000);
+  timeout.unref();
+
+  try {
+    for (const t of liveSyncTimers?.values?.() || []) clearTimeout(t);
+    if (liveSyncTimers?.clear) liveSyncTimers.clear();
+    if (openTradeLocks?.clear) openTradeLocks.clear();
+    if (activeOrders?.clear) activeOrders.clear();
+
+    await new Promise((resolve, reject) => {
+      serverInstance.close((err) => {
+        if (err) return reject(err);
+        resolve();
+      });
+    });
+
+    if (typeof global?.stopRiskWatcher === "function") {
+      try { global.stopRiskWatcher(); } catch (e) { console.warn("stopRiskWatcher threw:", e); }
+    }
+
+    await mongoose.disconnect();
+    clearTimeout(timeout);
+    process.exit(0);
+  } catch (err) {
+    console.error("Shutdown error:", err);
+    clearTimeout(timeout);
+    process.exit(1);
+  }
+};
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("unhandledRejection", (r) => { console.error("UnhandledRejection:", r); gracefulShutdown("unhandledRejection").catch(() => {}); });
+process.on("uncaughtException", (e) => { console.error("UncaughtException:", e); gracefulShutdown("uncaughtException").catch(() => {}); });
+
+module.exports = app;
