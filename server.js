@@ -13,8 +13,42 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 
+/* ======================================================
+   ROUTES IMPORTS
+====================================================== */
+
+/* EVITA QUE EXPLOTE SI NO EXISTE */
+let marketRoutesFactory = null;
+
+try {
+  marketRoutesFactory = require("./routes/marketRoutes");
+} catch (err) {
+  console.warn(
+    "⚠️ No se pudo cargar marketRoutes:",
+    err.message
+  );
+}
+
+/* ======================================================
+   APP + SERVER
+====================================================== */
+
 const app = express();
+
 const server = http.createServer(app);
+
+/* SOCKET IO */
+
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+/* ======================================================
+   FETCH
+====================================================== */
 
 const fetchFn =
   typeof globalThis.fetch === "function"
@@ -60,8 +94,9 @@ const ADMIN_API_KEY =
 ====================================================== */
 
 const ZOHO_ENABLED =
-  String(process.env.ZOHO_ENABLED || "true").toLowerCase() !==
-  "false";
+  String(
+    process.env.ZOHO_ENABLED || "true"
+  ).toLowerCase() !== "false";
 
 const ZOHO_CLIENT_ID =
   process.env.ZOHO_CLIENT_ID || "";
@@ -89,7 +124,8 @@ const ZOHO_FALLBACK_MODULE =
   process.env.ZOHO_FALLBACK_MODULE || "Contacts";
 
 const ZOHO_LAST_NAME_FIELD =
-  process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
+  process.env.ZOHO_LAST_NAME_FIELD ||
+  "Last_Name";
 
 const ZOHO_EMAIL_FIELD =
   process.env.ZOHO_EMAIL_FIELD || "Email";
@@ -98,16 +134,20 @@ const ZOHO_PHONE_FIELD =
   process.env.ZOHO_PHONE_FIELD || "Phone";
 
 const ZOHO_ADDRESS_FIELD =
-  process.env.ZOHO_ADDRESS_FIELD || "Street";
+  process.env.ZOHO_ADDRESS_FIELD ||
+  "Street";
 
 const ZOHO_FIRST_NAME_FIELD =
-  process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
+  process.env.ZOHO_FIRST_NAME_FIELD ||
+  "First_Name";
 
 const ZOHO_COMPANY_FIELD =
-  process.env.ZOHO_COMPANY_FIELD || "Company";
+  process.env.ZOHO_COMPANY_FIELD ||
+  "Company";
 
 const ZOHO_SYNC_INTERVAL_MS = Number(
-  process.env.ZOHO_SYNC_INTERVAL_MS || 300000
+  process.env.ZOHO_SYNC_INTERVAL_MS ||
+    300000
 );
 
 /* ======================================================
@@ -132,6 +172,28 @@ if (
     "⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN."
   );
 }
+
+/* ======================================================
+   MIDDLEWARES
+====================================================== */
+
+app.use(cors());
+
+app.use(express.json({
+  limit: "50mb",
+}));
+
+app.use(express.urlencoded({
+  extended: true,
+  limit: "50mb",
+}));
+
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 500,
+  })
+);
 
 /* ======================================================
    MULTER DOCUMENT UPLOAD
@@ -163,26 +225,29 @@ if (!fs.existsSync(documentsDir)) {
 
 /* Storage */
 
-const documentStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, documentsDir);
-  },
+const documentStorage =
+  multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, documentsDir);
+    },
 
-  filename: (req, file, cb) => {
-    const unique =
-      Date.now() +
-      "-" +
-      Math.round(Math.random() * 1e9);
+    filename: (req, file, cb) => {
+      const unique =
+        Date.now() +
+        "-" +
+        Math.round(
+          Math.random() * 1e9
+        );
 
-    cb(
-      null,
-      unique +
-        path.extname(
-          file.originalname || ""
-        )
-    );
-  },
-});
+      cb(
+        null,
+        unique +
+          path.extname(
+            file.originalname || ""
+          )
+      );
+    },
+  });
 
 /* Upload */
 
@@ -193,35 +258,136 @@ const uploadDocument = multer({
     fileSize: 10 * 1024 * 1024,
   },
 
-  fileFilter: (req, file, cb) => {
+  fileFilter: (
+    req,
+    file,
+    cb
+  ) => {
     cb(null, true);
   },
 });
 
 /* ======================================================
+   STATIC FILES
+====================================================== */
+
+app.use(
+  "/uploads",
+  express.static(uploadRoot)
+);
+
+/* ======================================================
    DB
 ====================================================== */
 
-Promise.resolve(connectDB()).catch((err) => {
+Promise.resolve(
+  connectDB()
+).catch((err) => {
   console.error(
     "❌ Error conectando DB:",
     err?.message || err
   );
 });
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ Mongo conectado");
-});
+mongoose.connection.on(
+  "connected",
+  () => {
+    console.log(
+      "✅ Mongo conectado"
+    );
+  }
+);
 
-mongoose.connection.on("error", (err) => {
-  console.error(
-    "❌ Mongo connection error:",
-    err
+mongoose.connection.on(
+  "error",
+  (err) => {
+    console.error(
+      "❌ Mongo connection error:",
+      err
+    );
+  }
+);
+
+mongoose.connection.on(
+  "disconnected",
+  () => {
+    console.warn(
+      "⚠️ Mongo disconnected"
+    );
+  }
+);
+
+/* ======================================================
+   MARKET ROUTES
+====================================================== */
+
+if (marketRoutesFactory) {
+  try {
+    app.use(
+      "/api/market",
+      typeof marketRoutesFactory ===
+        "function"
+        ? marketRoutesFactory({
+            io,
+          })
+        : marketRoutesFactory
+    );
+
+    console.log(
+      "✅ /api/market montado"
+    );
+  } catch (err) {
+    console.error(
+      "❌ No se pudo montar /api/market:",
+      err.message
+    );
+  }
+}
+
+/* ======================================================
+   SOCKET EVENTS
+====================================================== */
+
+io.on("connection", (socket) => {
+  console.log(
+    "🔌 Socket connected:",
+    socket.id
+  );
+
+  socket.on(
+    "disconnect",
+    () => {
+      console.log(
+        "❌ Socket disconnected:",
+        socket.id
+      );
+    }
   );
 });
 
-mongoose.connection.on("disconnected", () => {
-  console.warn("⚠️ Mongo disconnected");
+/* ======================================================
+   HEALTH CHECK
+====================================================== */
+
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    message:
+      "Servidor funcionando correctamente",
+  });
+});
+
+/* ======================================================
+   START SERVER
+====================================================== */
+
+const PORT =
+  process.env.PORT || 10000;
+
+server.listen(PORT, () => {
+  console.log(
+    `🚀 Server running on port ${PORT}`
+  );
 });
 /* ======================================================
    MODELOS
