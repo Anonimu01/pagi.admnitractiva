@@ -2452,13 +2452,5 @@ process.on("uncaughtException", (err) => {
   console.error(err);
 });
 
-process.on("uncaughtException", (err) => {
-  console.error("💥 UNCAUGHT EXCEPTION");
-  console.error(err);
-});
 
-process.on("unhandledRejection", (reason) => {
-  console.error("💥 UNHANDLED REJECTION");
-  console.error(reason);
-});
 module.exports = app;
