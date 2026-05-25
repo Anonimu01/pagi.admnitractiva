@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
@@ -13,11 +14,12 @@ const helmet = require("helmet");
 const compression = require("compression");
 const mongoSanitize = require("mongo-sanitize");
 
-
 const connectDB = require("./config/db");
 
 const app = express();
+
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
     origin: true,
@@ -27,24 +29,62 @@ const io = new Server(server, {
   transports: ["websocket", "polling"],
 });
 
-const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
+const fetchFn =
+  typeof globalThis.fetch === "function"
+    ? globalThis.fetch.bind(globalThis)
+    : null;
+
+/* ======================================================
+   ENV
+====================================================== */
 
 const PORT = Number(process.env.PORT || 10000);
-const JWT_SECRET = process.env.JWT_SECRET || "admin-secret-dev";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
-const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
-const CLIENT_ORIGIN_RAW = process.env.ADMIN_CLIENT_URL || process.env.CLIENT_URL || "*";
-const ALLOWED_ORIGINS = CLIENT_ORIGIN_RAW === "*" ? "*" : String(CLIENT_ORIGIN_RAW).split(",").map((s) => s.trim()).filter(Boolean);
+const JWT_SECRET =
+  process.env.JWT_SECRET || "admin-secret-dev";
+
+const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
+  process.env.ADMIN_USER ||
+  "";
+
+const ADMIN_PASS =
+  process.env.ADMIN_PASS ||
+  process.env.ADMIN_PASSWORD ||
+  "";
+
+const ADMIN_API_KEY =
+  process.env.ADMIN_API_KEY || "";
+
+const CLIENT_ORIGIN_RAW =
+  process.env.ADMIN_CLIENT_URL ||
+  process.env.CLIENT_URL ||
+  "*";
+
+const ALLOWED_ORIGINS =
+  CLIENT_ORIGIN_RAW === "*"
+    ? "*"
+    : String(CLIENT_ORIGIN_RAW)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+/* ======================================================
+   SAFE REQUIRE
+====================================================== */
 
 function safeRequire(mod) {
   try {
     return require(mod);
-  } catch {
+  } catch (err) {
+    console.warn(`⚠️ No se pudo cargar ${mod}`);
     return null;
   }
 }
+
+/* ======================================================
+   ROUTES
+====================================================== */
 
 const authRoutes = safeRequire("./routes/auth.routes.js");
 const userRoutes = safeRequire("./routes/user.routes.js");
@@ -56,112 +96,332 @@ const accountRoutes = safeRequire("./routes/account.routes.js");
 const passwordRoutes = safeRequire("./routes/password.routes.js");
 const withdrawRoutes = safeRequire("./routes/withdraw.routes.js");
 
-const sendEmail = safeRequire("./utils/sendEmail.js");
-const PolygonSocket = safeRequire("./sockets/polygonSocket.js");
-const PriceHandler = safeRequire("./utils/priceHandler.js");
-const marketRoutesFactory = safeRequire("./routes/market.routes.js");
-const startRiskWatcher = safeRequire("./jobs/risk.job.js")?.startRiskWatcher;
-const connectDBFn = typeof connectDB === "function" ? connectDB : null;
+/* ======================================================
+   UTILS
+====================================================== */
 
-const uploadRoot = path.join(process.cwd(), "uploads");
-const documentsDir = path.join(uploadRoot, "documents");
-fs.mkdirSync(documentsDir, { recursive: true });
+const sendEmail = safeRequire("./utils/sendEmail.js");
+
+const PolygonSocket =
+  safeRequire("./sockets/polygonSocket.js");
+
+const PriceHandler =
+  safeRequire("./utils/priceHandler.js");
+
+const marketRoutesFactory =
+  safeRequire("./routes/market.routes.js");
+
+const startRiskWatcher =
+  safeRequire("./jobs/risk.job.js")?.startRiskWatcher;
+
+const connectDBFn =
+  typeof connectDB === "function"
+    ? connectDB
+    : null;
+
+/* ======================================================
+   UPLOADS
+====================================================== */
+
+const uploadRoot = path.join(
+  process.cwd(),
+  "uploads"
+);
+
+const documentsDir = path.join(
+  uploadRoot,
+  "documents"
+);
+
+fs.mkdirSync(documentsDir, {
+  recursive: true,
+});
+
+/* ======================================================
+   EXPRESS CONFIG
+====================================================== */
 
 app.set("trust proxy", 1);
+
 app.disable("x-powered-by");
+
+/* ======================================================
+   SECURITY
+====================================================== */
 
 app.use(
   helmet({
     contentSecurityPolicy: false,
   })
 );
+
 app.use(compression());
 
+/* ======================================================
+   BODY PARSER
+====================================================== */
 
-app.use(express.json({ limit: "100mb" }));
+app.use(
+  express.json({
+    limit: "100mb",
+  })
+);
+
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "100mb",
+  })
+);
+
+/* ======================================================
+   MONGO SANITIZE
+====================================================== */
+
 app.use((req, res, next) => {
-  if (req.body) req.body = mongoSanitize(req.body);
-  if (req.query) req.query = mongoSanitize(req.query);
-  if (req.params) req.params = mongoSanitize(req.params);
+  try {
+    if (req.body) {
+      req.body = mongoSanitize(req.body);
+    }
+
+    if (req.query) {
+      req.query = mongoSanitize(req.query);
+    }
+
+    if (req.params) {
+      req.params = mongoSanitize(req.params);
+    }
+  } catch (err) {
+    console.error("sanitize error:", err);
+  }
+
   next();
 });
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+/* ======================================================
+   CORS
+====================================================== */
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (ALLOWED_ORIGINS === "*") return callback(null, true);
-      if (Array.isArray(ALLOWED_ORIGINS) && ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (ALLOWED_ORIGINS === "*") {
+        return callback(null, true);
+      }
+
+      if (
+        Array.isArray(ALLOWED_ORIGINS) &&
+        ALLOWED_ORIGINS.includes(origin)
+      ) {
+        return callback(null, true);
+      }
+
       try {
         const url = new URL(origin);
-        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return callback(null, true);
+
+        if (
+          url.hostname === "localhost" ||
+          url.hostname === "127.0.0.1"
+        ) {
+          return callback(null, true);
+        }
       } catch {}
-      return callback(new Error("Not allowed by CORS"));
+
+      return callback(
+        new Error("Not allowed by CORS")
+      );
     },
+
     credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+
+    methods: [
+      "GET",
+      "POST",
+      "PUT",
+      "PATCH",
+      "DELETE",
+      "OPTIONS",
+    ],
   })
 );
 
 app.options("*", cors());
 
+/* ======================================================
+   RATE LIMIT
+====================================================== */
+
 app.use(
   rateLimit({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
-    max: Number(process.env.RATE_LIMIT_MAX || 5000),
+    windowMs:
+      Number(
+        process.env.RATE_LIMIT_WINDOW_MS
+      ) ||
+      15 * 60 * 1000,
+
+    max:
+      Number(process.env.RATE_LIMIT_MAX) ||
+      5000,
+
     standardHeaders: true,
+
     legacyHeaders: false,
-    skip: (req) => ["GET", "HEAD", "OPTIONS"].includes(req.method),
+
+    skip: (req) =>
+      ["GET", "HEAD", "OPTIONS"].includes(
+        req.method
+      ),
   })
 );
 
-app.use("/uploads", express.static(uploadRoot));
-app.use(express.static(path.join(__dirname, "public")));
+/* ======================================================
+   STATIC
+====================================================== */
+
+app.use(
+  "/uploads",
+  express.static(uploadRoot)
+);
+
+app.use(
+  express.static(
+    path.join(__dirname, "public")
+  )
+);
+
+/* ======================================================
+   MULTER
+====================================================== */
 
 const documentStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, documentsDir),
+  destination: (_req, _file, cb) => {
+    cb(null, documentsDir);
+  },
+
   filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, unique + path.extname(file.originalname || ""));
+    const unique =
+      `${Date.now()}-` +
+      `${Math.round(Math.random() * 1e9)}`;
+
+    cb(
+      null,
+      unique +
+        path.extname(
+          file.originalname || ""
+        )
+    );
   },
 });
 
 const uploadDocument = multer({
   storage: documentStorage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
 });
 
 /* ======================================================
-   DB
+   DB CONNECT
 ====================================================== */
-Promise.resolve(connectDBFn ? connectDBFn() : null).catch((err) => {
-  console.error("Error conectando DB:", err?.message || err);
+
+Promise.resolve(
+  connectDBFn ? connectDBFn() : null
+).catch((err) => {
+  console.error(
+    "❌ Error conectando DB:",
+    err?.message || err
+  );
 });
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ Mongo conectado");
-  startAdminRealtimeFeed();
-  try {
-    if (typeof startRiskWatcher === "function") {
-      const intervalMs = Number(process.env.RISK_JOB_INTERVAL_MS) || 30000;
-      const alertThreshold = Number(process.env.RISK_ALERT_THRESHOLD) || 30;
-      const closeThreshold = Number(process.env.RISK_CLOSE_THRESHOLD) || 15;
-      const stopFn = startRiskWatcher({ intervalMs, alertThreshold, closeThreshold });
-      if (typeof stopFn === "function") global.stopRiskWatcher = stopFn;
-      console.log(`🛡️ Risk watcher iniciado (interval=${intervalMs}ms alert=${alertThreshold}% close=${closeThreshold}%)`);
+mongoose.connection.on(
+  "connected",
+  () => {
+    console.log("✅ Mongo conectado");
+
+    try {
+      if (
+        typeof startAdminRealtimeFeed ===
+        "function"
+      ) {
+        startAdminRealtimeFeed();
+      }
+    } catch (err) {
+      console.error(
+        "❌ Error realtime:",
+        err
+      );
     }
-  } catch (e) {
-    console.error("Error iniciando risk watcher:", e);
-  }
-});
 
-mongoose.connection.on("error", (err) => {
-  console.error("❌ Mongo connection error:", err);
-});
-mongoose.connection.on("disconnected", () => {
-  console.warn("⚠️ Mongo disconnected");
-});
+    try {
+      if (
+        typeof startRiskWatcher ===
+        "function"
+      ) {
+        const intervalMs =
+          Number(
+            process.env.RISK_JOB_INTERVAL_MS
+          ) || 30000;
+
+        const alertThreshold =
+          Number(
+            process.env.RISK_ALERT_THRESHOLD
+          ) || 30;
+
+        const closeThreshold =
+          Number(
+            process.env.RISK_CLOSE_THRESHOLD
+          ) || 15;
+
+        const stopFn =
+          startRiskWatcher({
+            intervalMs,
+            alertThreshold,
+            closeThreshold,
+          });
+
+        if (
+          typeof stopFn === "function"
+        ) {
+          global.stopRiskWatcher =
+            stopFn;
+        }
+
+        console.log(
+          `🛡️ Risk watcher iniciado`
+        );
+      }
+    } catch (e) {
+      console.error(
+        "❌ Error iniciando risk watcher:",
+        e
+      );
+    }
+  }
+);
+
+mongoose.connection.on(
+  "error",
+  (err) => {
+    console.error(
+      "❌ Mongo connection error:",
+      err
+    );
+  }
+);
+
+mongoose.connection.on(
+  "disconnected",
+  () => {
+    console.warn(
+      "⚠️ Mongo disconnected"
+    );
+  }
+);
 
 /* ======================================================
    MODELOS
