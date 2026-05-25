@@ -243,16 +243,37 @@ if (marketRoutesFactory) {
    ROUTE MOUNTS (PROTEGIDOS)
 ====================================================== */
 
-if (authRoutes) app.use("/api/auth", authRoutes);
-if (userRoutes) app.use("/api/users", userRoutes);
-if (verificationRoutes) app.use("/api/verification", verificationRoutes);
-if (walletRoutes) app.use("/api/wallet", walletRoutes);
-if (positionsRoutes) app.use("/api/positions", positionsRoutes);
-if (tradeRoutes) app.use("/api/trade", tradeRoutes);
-if (accountRoutes) app.use("/api/account", accountRoutes);
-if (passwordRoutes) app.use("/api/password", passwordRoutes);
-if (withdrawRoutes) app.use("/api/withdraws", withdrawRoutes);
+function safeUse(routePath, routeModule) {
+  try {
+    if (
+      routeModule &&
+      (
+        typeof routeModule === "function" ||
+        typeof routeModule === "object"
+      )
+    ) {
+      app.use(routePath, routeModule);
+      console.log(`✅ Route mounted: ${routePath}`);
+    } else {
+      console.warn(`⚠️ Route skipped: ${routePath}`);
+    }
+  } catch (err) {
+    console.error(
+      `❌ Error mounting ${routePath}:`,
+      err.message
+    );
+  }
+}
 
+safeUse("/api/auth", authRoutes);
+safeUse("/api/users", userRoutes);
+safeUse("/api/verification", verificationRoutes);
+safeUse("/api/wallet", walletRoutes);
+safeUse("/api/positions", positionsRoutes);
+safeUse("/api/trade", tradeRoutes);
+safeUse("/api/account", accountRoutes);
+safeUse("/api/password", passwordRoutes);
+safeUse("/api/withdraws", withdrawRoutes);
 /* ======================================================
    SOCKET EVENTS
 ====================================================== */
@@ -2650,5 +2671,18 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("unhandledRejection", (r) => { console.error("UnhandledRejection:", r); gracefulShutdown("unhandledRejection").catch(() => {}); });
 process.on("uncaughtException", (e) => { console.error("UncaughtException:", e); gracefulShutdown("uncaughtException").catch(() => {}); });
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION:");
+  console.error(err);
+});
 
+process.on("uncaughtException", (err) => {
+  console.error("💥 UNCAUGHT EXCEPTION");
+  console.error(err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("💥 UNHANDLED REJECTION");
+  console.error(reason);
+});
 module.exports = app;
