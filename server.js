@@ -1,522 +1,73 @@
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const path = require("path");
-const fs = require("fs");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
-const multer = require("multer");
-const helmet = require("helmet");
-const compression = require("compression");
-const mongoSanitize = require("mongo-sanitize");
 
 const connectDB = require("./config/db");
 
 const app = express();
-
 const server = http.createServer(app);
-
-const io = new Server(server, {
-  cors: {
-    origin: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    credentials: true,
-  },
-  transports: ["websocket", "polling"],
-});
-
-const fetchFn =
-  typeof globalThis.fetch === "function"
-    ? globalThis.fetch.bind(globalThis)
-    : null;
+const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
 
 /* ======================================================
-   ENV
+   CONFIG
 ====================================================== */
+const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
+const CORE_USERS_ENDPOINTS = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
-const PORT = Number(process.env.PORT || 10000);
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
+const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
+const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
-const JWT_SECRET =
-  process.env.JWT_SECRET || "admin-secret-dev";
+const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
+const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
+const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
+const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
+const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
+const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
+const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
+const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
+const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
+const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
+const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
+const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
+const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
+const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
 
-const ADMIN_EMAIL =
-  process.env.ADMIN_EMAIL ||
-  process.env.ADMIN_USER ||
-  "";
-
-const ADMIN_PASS =
-  process.env.ADMIN_PASS ||
-  process.env.ADMIN_PASSWORD ||
-  "";
-
-const ADMIN_API_KEY =
-  process.env.ADMIN_API_KEY || "";
-
-const CLIENT_ORIGIN_RAW =
-  process.env.ADMIN_CLIENT_URL ||
-  process.env.CLIENT_URL ||
-  "*";
-
-const ALLOWED_ORIGINS =
-  CLIENT_ORIGIN_RAW === "*"
-    ? "*"
-    : String(CLIENT_ORIGIN_RAW)
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-/* ======================================================
-   SAFE REQUIRE
-====================================================== */
-
-function safeRequire(mod) {
-  try {
-    const loaded = require(mod);
-
-    if (!loaded) {
-      console.warn(`⚠️ ${mod} devolvió null`);
-      return null;
-    }
-
-    return loaded;
-  } catch (err) {
-    console.warn(`⚠️ No se pudo cargar ${mod}`);
-    return null;
-  }
+if (!CORE_API_URL) {
+  console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
 }
-
-/* ======================================================
-   ROUTES
-====================================================== */
-
-const authRoutes =
-  safeRequire("./routes/auth.routes.js");
-
-const userRoutes =
-  safeRequire("./routes/user.routes.js");
-
-const verificationRoutes =
-  safeRequire("./routes/verification.routes.js");
-
-const walletRoutes =
-  safeRequire("./routes/wallet.routes.js");
-
-const positionsRoutes =
-  safeRequire("./routes/positions.routes.js");
-
-const tradeRoutes =
-  safeRequire("./routes/trade.routes.js");
-
-const accountRoutes =
-  safeRequire("./routes/account.routes.js");
-
-const passwordRoutes =
-  safeRequire("./routes/password.routes.js");
-
-const withdrawRoutes =
-  safeRequire("./routes/withdraw.routes.js");
-
-/* ======================================================
-   OPTIONAL UTILS
-====================================================== */
-
-const sendEmail =
-  safeRequire("./utils/sendEmail.js");
-
-const PolygonSocket =
-  safeRequire("./sockets/polygonSocket.js");
-
-const PriceHandler =
-  safeRequire("./utils/priceHandler.js");
-
-const marketRoutesFactory =
-  safeRequire("./routes/market.routes.js");
-
-const riskJob =
-  safeRequire("./jobs/risk.job.js");
-
-const startRiskWatcher =
-  riskJob?.startRiskWatcher || null;
-
-const connectDBFn =
-  typeof connectDB === "function"
-    ? connectDB
-    : null;
-
-/* ======================================================
-   UPLOADS
-====================================================== */
-
-const uploadRoot = path.join(
-  process.cwd(),
-  "uploads"
-);
-
-const documentsDir = path.join(
-  uploadRoot,
-  "documents"
-);
-
-fs.mkdirSync(documentsDir, {
-  recursive: true,
-});
-
-/* ======================================================
-   EXPRESS CONFIG
-====================================================== */
-
-app.set("trust proxy", 1);
-
-app.disable("x-powered-by");
-
-/* ======================================================
-   SECURITY
-====================================================== */
-
-app.use(
-  helmet({
-    contentSecurityPolicy: false,
-  })
-);
-
-app.use(compression());
-
-/* ======================================================
-   BODY PARSER
-====================================================== */
-
-app.use(
-  express.json({
-    limit: "100mb",
-  })
-);
-
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "100mb",
-  })
-);
-
-/* ======================================================
-   SANITIZE
-====================================================== */
-
-app.use((req, res, next) => {
-  try {
-    if (req.body) {
-      req.body = mongoSanitize(req.body);
-    }
-
-    if (req.query) {
-      req.query = mongoSanitize(req.query);
-    }
-
-    if (req.params) {
-      req.params = mongoSanitize(req.params);
-    }
-  } catch (err) {
-    console.error("sanitize error:", err);
-  }
-
-  next();
-});
-
-/* ======================================================
-   CORS
-====================================================== */
-
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (ALLOWED_ORIGINS === "*") {
-        return callback(null, true);
-      }
-
-      if (
-        Array.isArray(ALLOWED_ORIGINS) &&
-        ALLOWED_ORIGINS.includes(origin)
-      ) {
-        return callback(null, true);
-      }
-
-      try {
-        const url = new URL(origin);
-
-        if (
-          url.hostname === "localhost" ||
-          url.hostname === "127.0.0.1"
-        ) {
-          return callback(null, true);
-        }
-      } catch {}
-
-      return callback(
-        new Error("Not allowed by CORS")
-      );
-    },
-
-    credentials: true,
-
-    methods: [
-      "GET",
-      "POST",
-      "PUT",
-      "PATCH",
-      "DELETE",
-      "OPTIONS",
-    ],
-  })
-);
-
-app.options("*", cors());
-
-/* ======================================================
-   RATE LIMIT
-====================================================== */
-
-app.use(
-  rateLimit({
-    windowMs:
-      Number(
-        process.env.RATE_LIMIT_WINDOW_MS
-      ) ||
-      15 * 60 * 1000,
-
-    max:
-      Number(process.env.RATE_LIMIT_MAX) ||
-      5000,
-
-    standardHeaders: true,
-
-    legacyHeaders: false,
-
-    skip: (req) =>
-      ["GET", "HEAD", "OPTIONS"].includes(
-        req.method
-      ),
-  })
-);
-
-/* ======================================================
-   STATIC
-====================================================== */
-
-app.use(
-  "/uploads",
-  express.static(uploadRoot)
-);
-
-app.use(
-  express.static(
-    path.join(__dirname, "public")
-  )
-);
-
-/* ======================================================
-   ROUTE LOADERS
-====================================================== */
-
-if (authRoutes) {
-  app.use("/api/auth", authRoutes);
+if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
+  console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
 }
-
-if (userRoutes) {
-  app.use("/api/users", userRoutes);
-}
-
-if (verificationRoutes) {
-  app.use("/api/verification", verificationRoutes);
-}
-
-if (walletRoutes) {
-  app.use("/api/wallet", walletRoutes);
-}
-
-if (positionsRoutes) {
-  app.use("/api/positions", positionsRoutes);
-}
-
-if (tradeRoutes) {
-  app.use("/api/trade", tradeRoutes);
-}
-
-if (accountRoutes) {
-  app.use("/api/account", accountRoutes);
-}
-
-if (passwordRoutes) {
-  app.use("/api/password", passwordRoutes);
-}
-
-if (withdrawRoutes) {
-  app.use("/api/withdraw", withdrawRoutes);
-}
-
-/* ======================================================
-   MARKET ROUTES
-====================================================== */
-
-if (
-  typeof marketRoutesFactory ===
-  "function"
-) {
-  try {
-    const marketRoutes =
-      marketRoutesFactory(io);
-
-    if (marketRoutes) {
-      app.use(
-        "/api/market",
-        marketRoutes
-      );
-    }
-  } catch (err) {
-    console.error(
-      "❌ market routes error:",
-      err
-    );
-  }
-}
-
-/* ======================================================
-   MULTER
-====================================================== */
-
-const documentStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, documentsDir);
-  },
-
-  filename: (_req, file, cb) => {
-    const unique =
-      `${Date.now()}-${Math.round(
-        Math.random() * 1e9
-      )}`;
-
-    cb(
-      null,
-      unique +
-        path.extname(
-          file.originalname || ""
-        )
-    );
-  },
-});
-
-const uploadDocument = multer({
-  storage: documentStorage,
-
-  limits: {
-    fileSize: 10 * 1024 * 1024,
-  },
-});
 
 /* ======================================================
    DB
 ====================================================== */
-
-Promise.resolve(
-  connectDBFn ? connectDBFn() : null
-).catch((err) => {
-  console.error(
-    "❌ Error conectando DB:",
-    err?.message || err
-  );
+Promise.resolve(connectDB()).catch((err) => {
+  console.error("Error conectando DB:", err?.message || err);
 });
 
-mongoose.connection.on(
-  "connected",
-  () => {
-    console.log("✅ Mongo conectado");
+mongoose.connection.on("connected", () => {
+  console.log("✅ Mongo conectado");
+});
+mongoose.connection.on("error", (err) => {
+  console.error("❌ Mongo connection error:", err);
+});
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ Mongo disconnected");
+});
 
-    try {
-      if (
-        typeof startAdminRealtimeFeed ===
-        "function"
-      ) {
-        startAdminRealtimeFeed();
-      }
-    } catch (err) {
-      console.error(
-        "❌ realtime error:",
-        err
-      );
-    }
-
-    try {
-      if (
-        typeof startRiskWatcher ===
-        "function"
-      ) {
-        const intervalMs =
-          Number(
-            process.env.RISK_JOB_INTERVAL_MS
-          ) || 30000;
-
-        const alertThreshold =
-          Number(
-            process.env.RISK_ALERT_THRESHOLD
-          ) || 30;
-
-        const closeThreshold =
-          Number(
-            process.env.RISK_CLOSE_THRESHOLD
-          ) || 15;
-
-        const stopFn =
-          startRiskWatcher({
-            intervalMs,
-            alertThreshold,
-            closeThreshold,
-          });
-
-        if (
-          typeof stopFn === "function"
-        ) {
-          global.stopRiskWatcher =
-            stopFn;
-        }
-
-        console.log(
-          "🛡️ Risk watcher iniciado"
-        );
-      }
-    } catch (e) {
-      console.error(
-        "❌ Error iniciando risk watcher:",
-        e
-      );
-    }
-  }
-);
-
-mongoose.connection.on(
-  "error",
-  (err) => {
-    console.error(
-      "❌ Mongo connection error:",
-      err
-    );
-  }
-);
-
-mongoose.connection.on(
-  "disconnected",
-  () => {
-    console.warn(
-      "⚠️ Mongo disconnected"
-    );
-  }
-);
 
 /* ======================================================
    MODELOS
