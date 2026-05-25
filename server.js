@@ -12,7 +12,7 @@ const multer = require("multer");
 const helmet = require("helmet");
 const compression = require("compression");
 const mongoSanitize = require("mongo-sanitize");
-const xss = require("xss-clean");
+
 
 const connectDB = require("./config/db");
 
@@ -77,7 +77,7 @@ app.use(
 );
 app.use(compression());
 
-app.use(xss());
+
 app.use(express.json({ limit: "100mb" }));
 app.use((req, res, next) => {
   if (req.body) req.body = mongoSanitize(req.body);
