@@ -13,16 +13,36 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 
+/* ======================================================
+   SAFE REQUIRE
+====================================================== */
+
 function tryRequire(modulePath, fallback = null) {
   try {
-    return require(modulePath);
+    const mod = require(modulePath);
+
+    if (!mod) {
+      console.warn(`⚠️ ${modulePath} devolvió null`);
+      return fallback;
+    }
+
+    return mod;
   } catch (err) {
-    console.warn(`⚠️ No se pudo cargar ${modulePath}:`, err.message);
+    console.warn(
+      `⚠️ No se pudo cargar ${modulePath}:`,
+      err.message
+    );
+
     return fallback;
   }
 }
 
+/* ======================================================
+   APP
+====================================================== */
+
 const app = express();
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -31,6 +51,10 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
   },
 });
+
+/* ======================================================
+   FETCH
+====================================================== */
 
 const fetchFn =
   typeof globalThis.fetch === "function"
@@ -41,7 +65,9 @@ const fetchFn =
    CONFIG
 ====================================================== */
 
-const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
+const CORE_API_URL = String(
+  process.env.CORE_API_URL || ""
+).replace(/\/+$/, "");
 
 const CORE_USERS_ENDPOINTS = (
   process.env.CORE_USERS_ENDPOINTS ||
@@ -51,29 +77,57 @@ const CORE_USERS_ENDPOINTS = (
   .map((s) => s.trim())
   .filter(Boolean);
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
-const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
-const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
+const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
+  process.env.ADMIN_USER ||
+  "";
 
-const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
-const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
-const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
-const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
-const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
-const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
-const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
-const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
-const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
-const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
-const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
-const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
-const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
-const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
+const ADMIN_PASS =
+  process.env.ADMIN_PASS ||
+  process.env.ADMIN_PASSWORD ||
+  "";
+
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  process.env.ADMIN_JWT_SECRET ||
+  "admin-secret-dev";
+
+const ADMIN_API_KEY =
+  process.env.ADMIN_API_KEY || "";
 
 /* ======================================================
-   HELPERS AUTH
+   ZOHO
+====================================================== */
+
+const ZOHO_ENABLED =
+  String(
+    process.env.ZOHO_ENABLED || "true"
+  ).toLowerCase() !== "false";
+
+const ZOHO_CLIENT_ID =
+  process.env.ZOHO_CLIENT_ID || "";
+
+const ZOHO_CLIENT_SECRET =
+  process.env.ZOHO_CLIENT_SECRET || "";
+
+const ZOHO_REFRESH_TOKEN =
+  process.env.ZOHO_REFRESH_TOKEN || "";
+
+if (
+  ZOHO_ENABLED &&
+  (
+    !ZOHO_CLIENT_ID ||
+    !ZOHO_CLIENT_SECRET ||
+    !ZOHO_REFRESH_TOKEN
+  )
+) {
+  console.warn(
+    "⚠️ Zoho habilitado pero faltan credenciales."
+  );
+}
+
+/* ======================================================
+   AUTH HELPERS
 ====================================================== */
 
 function signAdminToken(payload = {}) {
@@ -83,53 +137,112 @@ function signAdminToken(payload = {}) {
       role: "admin",
     },
     JWT_SECRET,
-    { expiresIn: "8h" }
+    {
+      expiresIn: "8h",
+    }
   );
 }
 
-function ensureAdminAuth(req, res, next) {
+function ensureAdminAuth(
+  req,
+  res,
+  next
+) {
   try {
-    const authHeader = String(req.headers.authorization || "");
-    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    const cookieToken = req.cookies?.admin_token || req.headers["x-admin-token"] || "";
-    const token = bearer || cookieToken;
+    const authHeader = String(
+      req.headers.authorization || ""
+    );
 
-    if (ADMIN_API_KEY && String(req.headers["x-api-key"] || "") === ADMIN_API_KEY) {
+    const bearer =
+      authHeader.startsWith("Bearer ")
+        ? authHeader.slice(7).trim()
+        : "";
+
+    const cookieToken =
+      req.cookies?.admin_token ||
+      req.headers["x-admin-token"] ||
+      "";
+
+    const token =
+      bearer || cookieToken;
+
+    if (
+      ADMIN_API_KEY &&
+      String(
+        req.headers["x-api-key"] || ""
+      ) === ADMIN_API_KEY
+    ) {
       return next();
     }
 
     if (!token) {
-      return res.status(401).json({ ok: false, msg: "No autorizado" });
+      return res.status(401).json({
+        ok: false,
+        msg: "No autorizado",
+      });
     }
 
-    const decoded = jwt.verify(String(token), JWT_SECRET);
+    const decoded = jwt.verify(
+      String(token),
+      JWT_SECRET
+    );
+
     req.admin = decoded;
+
     return next();
   } catch (err) {
-    return res.status(401).json({ ok: false, msg: "Token inválido o expirado" });
+    return res.status(401).json({
+      ok: false,
+      msg: "Token inválido",
+    });
   }
 }
 
 /* ======================================================
-   ROUTES IMPORTS
+   ROUTES
 ====================================================== */
 
-const authRoutes = tryRequire("./routes/authRoutes");
-const userRoutes = tryRequire("./routes/userRoutes");
-const verificationRoutes = tryRequire("./routes/verificationRoutes");
-const walletRoutes = tryRequire("./routes/walletRoutes");
-const positionsRoutes = tryRequire("./routes/positionsRoutes");
-const tradeRoutes = tryRequire("./routes/tradeRoutes");
-const accountRoutes = tryRequire("./routes/accountRoutes");
-const passwordRoutes = tryRequire("./routes/passwordRoutes");
-const withdrawRoutes = tryRequire("./routes/withdrawRoutes");
+const authRoutes =
+  tryRequire("./routes/authRoutes");
 
-/* Si existe marketRoutes, lo montamos; si no, el server sigue vivo */
+const userRoutes =
+  tryRequire("./routes/userRoutes");
+
+const verificationRoutes =
+  tryRequire("./routes/verificationRoutes");
+
+const walletRoutes =
+  tryRequire("./routes/walletRoutes");
+
+const positionsRoutes =
+  tryRequire("./routes/positionsRoutes");
+
+const tradeRoutes =
+  tryRequire("./routes/tradeRoutes");
+
+const accountRoutes =
+  tryRequire("./routes/accountRoutes");
+
+const passwordRoutes =
+  tryRequire("./routes/passwordRoutes");
+
+const withdrawRoutes =
+  tryRequire("./routes/withdrawRoutes");
+
+/* ======================================================
+   MARKET ROUTES
+====================================================== */
+
 let marketRoutesFactory = null;
+
 try {
-  marketRoutesFactory = require("./routes/marketRoutes");
+  marketRoutesFactory =
+    require("./routes/marketRoutes");
 } catch (err) {
-  console.warn("⚠️ No se pudo cargar marketRoutes:", err.message);
+  console.warn(
+    "⚠️ No se pudo cargar marketRoutes:",
+    err.message
+  );
 }
 
 /* ======================================================
@@ -159,104 +272,152 @@ app.use(
 );
 
 /* ======================================================
-   MULTER DOCUMENT UPLOAD
+   UPLOADS
 ====================================================== */
 
-const uploadRoot = path.join(process.cwd(), "uploads");
-const documentsDir = path.join(uploadRoot, "documents");
+const uploadRoot = path.join(
+  process.cwd(),
+  "uploads"
+);
+
+const documentsDir = path.join(
+  uploadRoot,
+  "documents"
+);
 
 if (!fs.existsSync(uploadRoot)) {
-  fs.mkdirSync(uploadRoot, { recursive: true });
+  fs.mkdirSync(uploadRoot, {
+    recursive: true,
+  });
 }
 
 if (!fs.existsSync(documentsDir)) {
-  fs.mkdirSync(documentsDir, { recursive: true });
+  fs.mkdirSync(documentsDir, {
+    recursive: true,
+  });
 }
 
-const documentStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, documentsDir);
-  },
-  filename: (req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname || ""));
-  },
-});
+const documentStorage =
+  multer.diskStorage({
+    destination: (
+      req,
+      file,
+      cb
+    ) => {
+      cb(null, documentsDir);
+    },
+
+    filename: (
+      req,
+      file,
+      cb
+    ) => {
+      const unique =
+        Date.now() +
+        "-" +
+        Math.round(
+          Math.random() * 1e9
+        );
+
+      cb(
+        null,
+        unique +
+          path.extname(
+            file.originalname || ""
+          )
+      );
+    },
+  });
 
 const uploadDocument = multer({
   storage: documentStorage,
+
   limits: {
     fileSize: 10 * 1024 * 1024,
-  },
-  fileFilter: (req, file, cb) => {
-    cb(null, true);
   },
 });
 
 /* ======================================================
-   STATIC FILES
+   STATIC
 ====================================================== */
 
-app.use("/uploads", express.static(uploadRoot));
+app.use(
+  "/uploads",
+  express.static(uploadRoot)
+);
 
 /* ======================================================
    DB
 ====================================================== */
 
-Promise.resolve(connectDB()).catch((err) => {
-  console.error("❌ Error conectando DB:", err?.message || err);
-});
+Promise.resolve(connectDB())
+  .then(() => {
+    console.log("✅ DB conectada");
+  })
+  .catch((err) => {
+    console.error(
+      "❌ Error DB:",
+      err?.message || err
+    );
+  });
 
-mongoose.connection.on("connected", () => {
-  console.log("✅ Mongo conectado");
-});
+mongoose.connection.on(
+  "connected",
+  () => {
+    console.log("✅ Mongo conectado");
+  }
+);
 
-mongoose.connection.on("error", (err) => {
-  console.error("❌ Mongo connection error:", err);
-});
+mongoose.connection.on(
+  "error",
+  (err) => {
+    console.error(
+      "❌ Mongo error:",
+      err
+    );
+  }
+);
 
-mongoose.connection.on("disconnected", () => {
-  console.warn("⚠️ Mongo disconnected");
-});
+mongoose.connection.on(
+  "disconnected",
+  () => {
+    console.warn(
+      "⚠️ Mongo disconnected"
+    );
+  }
+);
 
 /* ======================================================
-   MARKET ROUTES
+   SAFE ROUTE USE
 ====================================================== */
 
-if (marketRoutesFactory) {
-  try {
-    const marketRouter =
-      typeof marketRoutesFactory === "function"
-        ? marketRoutesFactory({ io })
-        : marketRoutesFactory;
-
-    if (marketRouter) {
-      app.use("/api/market", marketRouter);
-      console.log("✅ /api/market montado");
-    }
-  } catch (err) {
-    console.error("❌ No se pudo montar /api/market:", err.message);
-  }
+function isRouterLike(obj) {
+  return (
+    typeof obj === "function" ||
+    (
+      typeof obj === "object" &&
+      obj !== null
+    )
+  );
 }
 
-/* ======================================================
-   ROUTE MOUNTS (PROTEGIDOS)
-====================================================== */
-
-function safeUse(routePath, routeModule) {
+function safeUse(
+  routePath,
+  routeModule
+) {
   try {
-    if (
-      routeModule &&
-      (
-        typeof routeModule === "function" ||
-        typeof routeModule === "object"
-      )
-    ) {
-      app.use(routePath, routeModule);
-      console.log(`✅ Route mounted: ${routePath}`);
-    } else {
-      console.warn(`⚠️ Route skipped: ${routePath}`);
+    if (!isRouterLike(routeModule)) {
+      console.warn(
+        `⚠️ Route skipped: ${routePath}`
+      );
+      return;
     }
+
+    app.use(routePath, routeModule);
+
+    console.log(
+      `✅ Mounted: ${routePath}`
+    );
   } catch (err) {
     console.error(
       `❌ Error mounting ${routePath}:`,
@@ -265,47 +426,156 @@ function safeUse(routePath, routeModule) {
   }
 }
 
-safeUse("/api/auth", authRoutes);
-safeUse("/api/users", userRoutes);
-safeUse("/api/verification", verificationRoutes);
-safeUse("/api/wallet", walletRoutes);
-safeUse("/api/positions", positionsRoutes);
-safeUse("/api/trade", tradeRoutes);
-safeUse("/api/account", accountRoutes);
-safeUse("/api/password", passwordRoutes);
-safeUse("/api/withdraws", withdrawRoutes);
 /* ======================================================
-   SOCKET EVENTS
+   MOUNT ROUTES
+====================================================== */
+
+safeUse("/api/auth", authRoutes);
+
+safeUse("/api/users", userRoutes);
+
+safeUse(
+  "/api/verification",
+  verificationRoutes
+);
+
+safeUse("/api/wallet", walletRoutes);
+
+safeUse(
+  "/api/positions",
+  positionsRoutes
+);
+
+safeUse("/api/trade", tradeRoutes);
+
+safeUse(
+  "/api/account",
+  accountRoutes
+);
+
+safeUse(
+  "/api/password",
+  passwordRoutes
+);
+
+safeUse(
+  "/api/withdraws",
+  withdrawRoutes);
+
+/* ======================================================
+   MARKET ROUTER
+====================================================== */
+
+try {
+  if (marketRoutesFactory) {
+    const marketRouter =
+      typeof marketRoutesFactory ===
+      "function"
+        ? marketRoutesFactory({
+            io,
+          })
+        : marketRoutesFactory;
+
+    if (
+      marketRouter &&
+      isRouterLike(marketRouter)
+    ) {
+      app.use(
+        "/api/market",
+        marketRouter
+      );
+
+      console.log(
+        "✅ /api/market montado"
+      );
+    } else {
+      console.warn(
+        "⚠️ marketRoutes inválido"
+      );
+    }
+  }
+} catch (err) {
+  console.error(
+    "❌ marketRoutes error:",
+    err.message
+  );
+}
+
+/* ======================================================
+   SOCKETS
 ====================================================== */
 
 io.on("connection", (socket) => {
-  console.log("🔌 Socket connected:", socket.id);
+  console.log(
+    "🔌 Socket connected:",
+    socket.id
+  );
 
-  socket.on("disconnect", () => {
-    console.log("❌ Socket disconnected:", socket.id);
-  });
+  socket.on(
+    "disconnect",
+    () => {
+      console.log(
+        "❌ Socket disconnected:",
+        socket.id
+      );
+    }
+  );
 });
 
 /* ======================================================
-   HEALTH CHECK
+   HEALTH
 ====================================================== */
 
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    message: "Servidor funcionando correctamente",
+    message:
+      "Servidor funcionando correctamente",
   });
 });
 
 /* ======================================================
-   START SERVER
+   ERRORS
 ====================================================== */
 
-const PORT = process.env.PORT || 10000;
+process.on(
+  "uncaughtException",
+  (err) => {
+    console.error(
+      "💥 UNCAUGHT EXCEPTION"
+    );
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+    console.error(err);
+  }
+);
+
+process.on(
+  "unhandledRejection",
+  (reason) => {
+    console.error(
+      "💥 UNHANDLED REJECTION"
+    );
+
+    console.error(reason);
+  }
+);
+
+/* ======================================================
+   START
+====================================================== */
+
+const PORT =
+  process.env.PORT || 10000;
+
+server.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `🚀 Server running on port ${PORT}`
+    );
+  }
+);
 
 module.exports = app;
 /* ======================================================
