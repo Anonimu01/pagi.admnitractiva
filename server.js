@@ -1500,7 +1500,6 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
   }
 });
 
-app.post(["/api/admin/deposit", "/api/deposit"], ...)
 
 /* ======================================================
    SYNC CORE
