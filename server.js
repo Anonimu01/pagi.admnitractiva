@@ -13,10 +13,7 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 const cookieParser = require("cookie-parser");
-const fetch = (...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
-const fetchFn = fetch;
 
 
 /* ======================================================
@@ -1331,6 +1328,9 @@ async function syncSingleUserToZohoById(userId) {
   return await syncUserToZohoAndMark(doc);
 }
 
+/* ======================================================
+   INITIAL CORE SYNC
+====================================================== */
 async function ensureInitialCoreSync() {
   try {
     const result = await syncCoreUsersToLocalAndZoho();
@@ -1339,14 +1339,6 @@ async function ensureInitialCoreSync() {
     console.warn("Sync inicial falló:", err?.message || err);
   }
 }
-
-setTimeout(() => { ensureInitialCoreSync(); }, 3000);
-if (Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000) > 0) {
-  setInterval(() => {
-    syncCoreUsersToLocalAndZoho().catch((e) => console.warn("sync interval error:", e?.message || e));
-  }, Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000)).unref();
-}
-
 /* ======================================================
    LOCAL BALANCE / WITHDRAW HELPERS
 ====================================================== */
@@ -2758,6 +2750,44 @@ app.post("/api/documents/upload", async (req, res) => {
       error: "server_error",
       message: err?.message || "Error interno",
     });
+  }
+});
+
+/* =========================
+   START / SHUTDOWN
+========================= */
+const PORT = process.env.PORT || 3000;
+
+const serverInstance = server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on ${PORT}`);
+  console.log("ENV STATUS:");
+  console.log("RESEND:", !!process.env.RESEND_API_KEY);
+  console.log("SENDER:", !!process.env.SENDER_EMAIL);
+  console.log("MONGO:", !!process.env.MONGO_URI);
+  console.log("ADMIN_API_KEY:", !!process.env.ADMIN_API_KEY);
+  console.log("POLYGON:", !!process.env.POLYGON_API_KEY);
+
+  if (!process.env.POLYGON_API_KEY) {
+    console.warn("⚠️ POLYGON_API_KEY no configurado — realtime limitado");
+  }
+
+  if (!process.env.RESEND_API_KEY) {
+    console.warn("⚠️ Resend no configurado — emails pueden usar SMTP o simulación");
+  }
+
+  /* =========================
+     INITIAL CORE SYNC
+  ========================= */
+  setTimeout(() => {
+    ensureInitialCoreSync();
+  }, 3000);
+
+  if (Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000) > 0) {
+    setInterval(() => {
+      syncCoreUsersToLocalAndZoho().catch((e) =>
+        console.warn("sync interval error:", e?.message || e)
+      );
+    }, Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000)).unref();
   }
 });
 
