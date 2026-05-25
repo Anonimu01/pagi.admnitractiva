@@ -52,6 +52,44 @@ if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOK
 }
 
 /* ======================================================
+   MULTER DOCUMENT UPLOAD
+====================================================== */
+const uploadRoot = path.join(process.cwd(), "uploads");
+const documentsDir = path.join(uploadRoot, "documents");
+
+if (!fs.existsSync(uploadRoot)) {
+  fs.mkdirSync(uploadRoot, { recursive: true });
+}
+
+if (!fs.existsSync(documentsDir)) {
+  fs.mkdirSync(documentsDir, { recursive: true });
+}
+
+const documentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, documentsDir);
+  },
+
+  filename: (req, file, cb) => {
+    const unique =
+      Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    cb(
+      null,
+      unique + path.extname(file.originalname || "")
+    );
+  },
+});
+
+const uploadDocument = multer({
+  storage: documentStorage,
+
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+});
+
+/* ======================================================
    DB
 ====================================================== */
 Promise.resolve(connectDB()).catch((err) => {
