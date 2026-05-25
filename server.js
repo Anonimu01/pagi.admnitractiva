@@ -1651,6 +1651,9 @@ app.get(["/api/admin/withdraws", "/api/admin/withdrawals"], ensureAdminAuth, asy
   }
 });
 
+/* ======================================================
+   WITHDRAW APPROVE / REJECT
+====================================================== */
 app.post(
   ["/api/admin/withdraw/approve", "/api/admin/withdrawals/approve"],
   ensureAdminAuth,
@@ -1812,7 +1815,7 @@ app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, 
 });
 
 /* ======================================================
-   WITHDRAW CLIENT REQUEST
+   CLIENT WITHDRAW REQUEST
 ====================================================== */
 app.post("/api/withdraw/request", async (req, res) => {
   try {
@@ -1868,6 +1871,41 @@ app.post("/api/withdraw/request", async (req, res) => {
 /* ======================================================
    DOCUMENTS
 ====================================================== */
+const storageDocuments = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "uploads", "documents");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + "-" + file.originalname.replace(/\s+/g, "_");
+    cb(null, uniqueName);
+  },
+});
+
+const uploadDocument = multer({
+  storage: storageDocuments,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/jpg",
+    ];
+
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Formato de archivo no permitido"));
+    }
+  },
+});
+
 app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
@@ -1961,284 +1999,6 @@ app.post(
   }
 );
 
-/* ======================================================
-   UPDATE LEVERAGE
-====================================================== */
-app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, leverage } = req.body || {};
-    if (!userId || leverage === undefined || leverage === null || leverage === "") {
-      return res.status(400).json({ msg: "Datos incompletos" });
-    }
-
-    const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) {
-      return res.status(400).json({ msg: "Leverage inválido" });
-    }
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(userId, account, null, null);
-
-    return res.json({
-      ok: true,
-      msg: "Leverage actualizado",
-      leverage: lev,
-      account: account.account,
-      wallet: account.wallet,
-    });
-  } catch (err) {
-    console.error("/api/admin/update-leverage error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
-  try {
-    const { leverage } = req.body || {};
-    const user = await User.findById(req.params.id).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
-
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) {
-      return res.status(400).json({ msg: "Leverage inválido" });
-    }
-
-    const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(String(user._id), account, null, null);
-
-    return res.json({
-      ok: true,
-      msg: "Leverage actualizado (PUT)",
-      leverage: lev,
-      account: account.account,
-      wallet: account.wallet,
-    });
-  } catch (err) {
-    console.error("PUT /admin/users/leverage/:id error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
-
-/* ======================================================
-   UPDATE BALANCE
-====================================================== */
-app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, balance, leverage, note } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
-
-    const result = await depositByDelta(
-      req,
-      res,
-      userId,
-      balance,
-      leverage,
-      note || "Update balance"
-    );
-
-    if (result?.headers) relaySetCookies(result.headers, res);
-    if (result && result.ok) return res.status(result.status).json(result.data);
-
-    return res.status(result?.status || 500).json(
-      result?.data || { ok: false, msg: "Error actualizando saldo" }
-    );
-  } catch (err) {
-    console.error("/api/admin/update-balance error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
-  }
-});
-
-/* ======================================================
-   DEPOSIT / WITHDRAW
-====================================================== */
-app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, leverage, note, currency } = req.body || {};
-    if (!userId || amount === undefined || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/deposit", {
-      method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Admin deposit",
-        currency: currency || "USD",
-      },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localDeposit({
-      userId,
-      amount: numericAmount,
-      leverage: leverage !== undefined ? Number(leverage) : undefined,
-      note: note || "Admin deposit",
-      currency: currency || "USD",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/deposit error:", err);
-    return res.status(500).json({ ok: false, msg: "Error depósito" });
-  }
-});
-
-app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, amount, note } = req.body || {};
-    if (!userId || amount === undefined || amount === null || amount === "") {
-      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
-    }
-
-    const numericAmount = normalizeNumber(amount);
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ ok: false, error: "amount inválido" });
-    }
-
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        note: note || "Admin withdrawal",
-      },
-    });
-
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-
-      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
-      const account = remote.data?.data?.account || remote.data?.account || null;
-      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
-      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
-
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-      if (balance !== null) io.emit(`balance:${userId}`, balance);
-
-      const payload = {
-        ok: true,
-        userId: String(userId),
-        amount: numericAmount,
-        status: "approved",
-        message: "Retiro aprobado",
-        updatedAt: new Date(),
-      };
-
-      emitWithdrawRealtime(payload);
-      return res.status(remote.status).json(remote.data);
-    }
-
-    const local = await localWithdraw({
-      userId,
-      amount: numericAmount,
-      note: note || "Admin withdrawal",
-    });
-
-    return res.status(local.status).json(local.data);
-  } catch (err) {
-    console.error("/api/admin/withdraw error:", err);
-    return res.status(500).json({ ok: false, msg: "Error retiro" });
-  }
-});
-
-/* ======================================================
-   CLIENT WITHDRAW REQUEST
-====================================================== */
-app.post("/api/withdraw/request", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const body = req.body || {};
-    const amount = Number(body.amount || 0);
-    const method = String(body.method || body.withdrawMethod || "USDT").trim();
-    const walletAddress = String(body.walletAddress || body.address || "").trim();
-    const note = String(body.note || "").trim();
-
-    if (!Number.isFinite(amount) || amount <= 0) {
-      return res.status(400).json({ ok: false, error: "invalid_amount" });
-    }
-    if (!walletAddress) {
-      return res.status(400).json({ ok: false, error: "wallet_required" });
-    }
-
-    const wallet = await getWalletDocForUser(user._id);
-    const balance = Number(wallet.balanceOwn ?? wallet.balance ?? 0);
-    if (amount > balance) {
-      return res.status(400).json({ ok: false, error: "insufficient_balance" });
-    }
-
-    const withdraw = await Withdraw.create({
-      userId: String(user._id),
-      amount,
-      method,
-      walletAddress,
-      note,
-      status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    console.log("✅ WITHDRAW CREATED:", withdraw._id);
-    io.emit("withdraw:new", {
-      withdraw: withdraw.toObject ? withdraw.toObject() : withdraw,
-    });
-
-    return res.json({ ok: true, message: "Retiro enviado", withdraw });
-  } catch (err) {
-    console.error("❌ /api/withdraw/request:", err);
-    return res.status(500).json({
-      ok: false,
-      error: "server_error",
-      message: err?.message || "Error interno",
-    });
-  }
-});
-
-/* ======================================================
-   DOCUMENT UPLOAD STORAGE
-====================================================== */
 app.post("/api/documents", uploadDocument.single("document"), async (req, res) => {
   try {
     const user = await getUserDocFromBearer(req);
@@ -2712,10 +2472,6 @@ async function emitDocumentUpdate(documentId) {
 }
 
 /* ======================================================
-   GET REAL PRICE (SINGLE)
-====================================================== */
-
-/* ======================================================
    STATIC
 ====================================================== */
 const staticCandidates = ["public", "publico", "público", "Public", "Publico"];
@@ -2913,10 +2669,6 @@ process.on("unhandledRejection", (r) => {
 process.on("uncaughtException", (e) => {
   console.error("UncaughtException:", e);
   gracefulShutdown("uncaughtException").catch(() => {});
-});
-process.on("uncaughtException", (err) => {
-  console.error("UNCAUGHT EXCEPTION:");
-  console.error(err);
 });
 
 module.exports = app;
