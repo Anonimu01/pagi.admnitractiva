@@ -533,20 +533,159 @@ function trimSeenSet(set, maxSize = 1000) {
   }
 }
 
-async function loadWithdraws({ userId = null, status = null, limit = 100 } = {}) {
-  const query = {};
-  if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status);
-  return await Withdraw.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
+/* ======================================================
+   LOAD WITHDRAWS
+====================================================== */
+async function loadWithdraws({
+  userId = null,
+  status = "all",
+  limit = 100,
+}) {
+  try {
+    const query = {};
+
+    if (userId) {
+      query.userId = String(userId);
+    }
+
+    const withdraws = await Withdraw.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean()
+      .exec()
+      .catch(() => []);
+
+    const normalized = withdraws.map((w) => {
+      const normalizedStatus = (
+        w.status ||
+        w.Estado ||
+        "pending"
+      ).toString().toLowerCase();
+
+      return {
+        _id: String(w._id),
+
+        userId:
+          String(w.userId || ""),
+
+        amount:
+          Number(
+            w.amount ??
+            w.Amount ??
+            w.Cantidad ??
+            0
+          ),
+
+        account:
+          w.account ||
+          w.Account ||
+          w.Cuenta ||
+          "",
+
+        proofUrl:
+          w.proofUrl ||
+          "",
+
+        status: normalizedStatus,
+
+        Estado: normalizedStatus,
+
+        adminNote:
+          w.adminNote ||
+          "",
+
+        createdAt:
+          w.createdAt ||
+          w.actualizadoAt ||
+          new Date(),
+      };
+    });
+
+    if (status !== "all") {
+      return normalized.filter(
+        (w) => w.status === status.toLowerCase()
+      );
+    }
+
+    return normalized;
+  } catch (err) {
+    console.error("loadWithdraws error:", err);
+    return [];
+  }
 }
 
-async function loadDocuments({ userId = null, status = null, limit = 100 } = {}) {
-  const query = {};
-  if (userId) query.userId = String(userId);
-  if (status && status !== "all") query.status = String(status);
-  return await Document.find(query).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
-}
 
+/* ======================================================
+   LOAD DOCUMENTS
+====================================================== */
+async function loadDocuments({
+  userId = null,
+  status = "all",
+  limit = 100,
+}) {
+  try {
+    const query = {};
+
+    if (userId) {
+      query.userId = String(userId);
+    }
+
+    const documents = await Document.find(query)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean()
+      .exec()
+      .catch(() => []);
+
+    const normalized = documents.map((doc) => {
+      const normalizedStatus = (
+        doc.status ||
+        doc.Estado ||
+        "pending"
+      ).toString().toLowerCase();
+
+      return {
+        _id: String(doc._id),
+
+        userId: String(doc.userId || ""),
+
+        type:
+          doc.type ||
+          doc.Tipo ||
+          "Documento",
+
+        documentUrl:
+          doc.documentUrl ||
+          doc.url ||
+          "",
+
+        status: normalizedStatus,
+
+        Estado: normalizedStatus,
+
+        adminNote:
+          doc.adminNote ||
+          "",
+
+        createdAt:
+          doc.createdAt ||
+          doc.actualizadoAt ||
+          new Date(),
+      };
+    });
+
+    if (status !== "all") {
+      return normalized.filter(
+        (d) => d.status === status.toLowerCase()
+      );
+    }
+
+    return normalized;
+  } catch (err) {
+    console.error("loadDocuments error:", err);
+    return [];
+  }
+}
 async function seedAdminRealtimeCache() {
   const [withdraws, documents] = await Promise.all([
     Withdraw.find({}).sort({ createdAt: -1 }).limit(ADMIN_REALTIME_SEED_LIMIT).lean().exec().catch(() => []),
@@ -690,14 +829,16 @@ async function loadTransactionsForUser(userId, limit = 50) {
   return await Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(limit).lean().exec().catch(() => []);
 }
 
+/* ======================================================
+   LOAD WITHDRAWS FOR USER
+====================================================== */
 async function loadWithdrawsForUser(userId, status = "all") {
-  const query = { userId: String(userId) };
-  if (status && status !== "all") {
-    query.status = String(status);
-  }
-  return await Withdraw.find(query).sort({ createdAt: -1 }).lean().exec().catch(() => []);
+  return await loadWithdraws({
+    userId,
+    status,
+    limit: 500,
+  });
 }
-
 async function recordTransaction({
   user,
   type,
@@ -1433,87 +1574,177 @@ function emitWithdrawUpdate(payload) {
 /* ======================================================
    WITHDRAW REQUESTS
 ====================================================== */
-app.get(["/api/admin/withdraws/:userId", "/api/admin/withdrawals/:userId"], ensureAdminAuth, async (req, res) => {
+app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
   try {
-    const status = req.query.status || "all";
-    const data = await loadWithdrawsForUser(req.params.userId, status);
-    return res.json({ ok: true, count: data.length, withdraws: data, withdrawals: data, data, items: data });
+    const withdraws = await loadWithdraws({
+      userId: req.params.userId,
+      status: req.query.status || "all",
+      limit: 500,
+    });
+
+    return res.json({
+      ok: true,
+      count: withdraws.length,
+      withdraws,
+      withdrawals: withdraws,
+      data: withdraws,
+      items: withdraws,
+    });
   } catch (err) {
-    console.error("GET withdraws error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
+    console.error("/api/admin/withdraws/:userId error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo retiros",
+    });
   }
 });
-
+/* ======================================================
+   WITHDRAWS  jevi
+====================================================== */
 app.get(["/api/admin/withdraws", "/api/admin/withdrawals"], ensureAdminAuth, async (req, res) => {
   try {
-    const userId = req.query.userId || null;
-    const status = req.query.status || "all";
-    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-    const withdraws = await loadWithdraws({ userId, status, limit });
-    return res.json({ ok: true, count: withdraws.length, withdraws, withdrawals: withdraws, data: withdraws, items: withdraws });
+    const withdraws = await loadWithdraws({
+      userId: req.query.userId || null,
+      status: req.query.status || "all",
+      limit: 500,
+    });
+
+    return res.json({
+      ok: true,
+      count: withdraws.length,
+      withdraws,
+      withdrawals: withdraws,
+      data: withdraws,
+      items: withdraws,
+    });
   } catch (err) {
     console.error("/api/admin/withdraws error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo retiros" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo retiros",
+    });
   }
 });
 
 app.post(["/api/admin/withdraw/approve", "/api/admin/withdrawals/approve"], ensureAdminAuth, async (req, res) => {
   try {
     const { id, adminNote = "" } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
 
-    const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
-
-    const userId = String(w.userId || "");
-    const amount = Number(w.cantidad ?? w.amount ?? 0);
-
-    const remote = await proxyToCore(req, "/api/admin/withdraw", {
-      method: "POST",
-      body: { userId, amount, note: adminNote || `Aprobación de retiro #${id}` },
-    });
-
-    if (!remote.ok) {
-      const local = await localWithdraw({ userId, amount, note: adminNote || `Aprobación de retiro #${id}` });
-      if (!local.ok) return res.status(local.status).json(local.data);
-    } else if (remote.headers) {
-      relaySetCookies(remote.headers, res);
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "id requerido",
+      });
     }
 
+    const w = await Withdraw.findById(id).catch(() => null);
+
+    if (!w) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
+
+    const userId = String(w.userId || "");
+
+    const amount = Number(
+      w.amount ??
+      w.Amount ??
+      w.Cantidad ??
+      0
+    );
+
     w.status = "approved";
+    w.Estado = "approved";
     w.adminNote = adminNote;
     w.updatedAt = new Date();
+
     await w.save();
 
-    const payload = { ok: true, id: String(w._id), userId, amount, status: "approved", message: "Retiro aprobado", updatedAt: new Date() };
+    const payload = {
+      ok: true,
+      id: String(w._id),
+      userId,
+      amount,
+      status: "approved",
+      message: "Retiro aprobado",
+      updatedAt: new Date(),
+    };
+
     emitWithdrawUpdate(payload);
+
     return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/approve error:", err);
-    return res.status(500).json({ ok: false, msg: "Error aprobando retiro", error: err?.message || String(err) });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error aprobando retiro",
+      error: err?.message || String(err),
+    });
   }
 });
 
 app.post(["/api/admin/withdraw/reject", "/api/admin/withdrawals/reject"], ensureAdminAuth, async (req, res) => {
   try {
     const { id, adminNote = "" } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, msg: "id requerido" });
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "id requerido",
+      });
+    }
 
     const w = await Withdraw.findById(id).catch(() => null);
-    if (!w) return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
+
+    if (!w) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
 
     const userId = String(w.userId || "");
+
+    const amount = Number(
+      w.amount ??
+      w.Amount ??
+      w.Cantidad ??
+      0
+    );
+
     w.status = "rejected";
+    w.Estado = "rejected";
     w.adminNote = adminNote;
     w.updatedAt = new Date();
+
     await w.save();
 
-    const payload = { ok: true, id: String(w._id), userId, amount: Number(w.cantidad ?? w.amount ?? 0), status: "rejected", message: "Retiro rechazado", updatedAt: new Date() };
+    const payload = {
+      ok: true,
+      id: String(w._id),
+      userId,
+      amount,
+      status: "rejected",
+      message: "Retiro rechazado",
+      updatedAt: new Date(),
+    };
+
     emitWithdrawUpdate(payload);
+
     return res.json(payload);
   } catch (err) {
     console.error("POST withdraw/reject error:", err);
-    return res.status(500).json({ ok: false, msg: "Error rechazando retiro", error: err?.message || String(err) });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error rechazando retiro",
+      error: err?.message || String(err),
+    });
   }
 });
 
@@ -1523,28 +1754,55 @@ app.post(["/api/admin/withdraw/reject", "/api/admin/withdrawals/reject"], ensure
 app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
   try {
     const userId = req.query.userId || null;
-    const status = req.query.status || "pending";
-    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-    const documents = await loadDocuments({ userId, status, limit });
-    return res.json({ ok: true, count: documents.length, documents, data: documents, items: documents });
+    const status = req.query.status || "all";
+
+    const documents = await loadDocuments({
+      userId,
+      status,
+      limit: 500,
+    });
+
+    return res.json({
+      ok: true,
+      count: documents.length,
+      documents,
+      data: documents,
+      items: documents,
+    });
   } catch (err) {
     console.error("/api/admin/documents error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo documentos",
+    });
   }
 });
 
 app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
   try {
-    const status = req.query.status || "all";
-    const limit = Math.min(Number(req.query.limit || 100) || 100, 500);
-    const documents = await loadDocuments({ userId: req.params.userId, status, limit });
-    return res.json({ ok: true, count: documents.length, documents, data: documents, items: documents });
+    const documents = await loadDocuments({
+      userId: req.params.userId,
+      status: req.query.status || "all",
+      limit: 500,
+    });
+
+    return res.json({
+      ok: true,
+      count: documents.length,
+      documents,
+      data: documents,
+      items: documents,
+    });
   } catch (err) {
     console.error("/api/admin/documents/:userId error:", err);
-    return res.status(500).json({ ok: false, msg: "Error obteniendo documentos del usuario" });
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo documentos",
+    });
   }
 });
-
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
