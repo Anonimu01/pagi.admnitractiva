@@ -11,7 +11,7 @@ const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const helmet = require("helmet");
 const compression = require("compression");
-const mongoSanitize = require("express-mongo-sanitize");
+const mongoSanitize = require("mongo-sanitize");
 const xss = require("xss-clean");
 
 const connectDB = require("./config/db");
@@ -76,9 +76,15 @@ app.use(
   })
 );
 app.use(compression());
-app.use(mongoSanitize());
+
 app.use(xss());
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "100mb" }));
+app.use((req, res, next) => {
+  if (req.body) req.body = mongoSanitize(req.body);
+  if (req.query) req.query = mongoSanitize(req.query);
+  if (req.params) req.params = mongoSanitize(req.params);
+  next();
+});
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 app.use(
