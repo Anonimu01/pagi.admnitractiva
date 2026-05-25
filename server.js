@@ -1929,6 +1929,51 @@ app.post("/api/documents", uploadDocument.single("document"), async (req, res) =
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
+// ======================================================
+// MULTER CONFIG DOCUMENTS
+// ======================================================
+
+const storageDocuments = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "uploads", "documents");
+
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    cb(null, dir);
+  },
+
+  filename: (req, file, cb) => {
+    const uniqueName =
+      Date.now() + "-" + file.originalname.replace(/\s+/g, "_");
+
+    cb(null, uniqueName);
+  },
+});
+
+const uploadDocument = multer({
+  storage: storageDocuments,
+
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+  },
+
+  fileFilter: (req, file, cb) => {
+    const allowed = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png",
+      "image/jpg",
+    ];
+
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error("Formato de archivo no permitido"));
+    }
+  },
+});
 
 app.post("/api/documents/upload", async (req, res) => {
   try {
