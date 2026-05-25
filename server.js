@@ -13,6 +13,10 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 const cookieParser = require("cookie-parser");
+const fetch = (...args) =>
+  import("node-fetch").then(({ default: fetch }) => fetch(...args));
+
+const fetchFn = fetch;
 
 
 /* ======================================================
