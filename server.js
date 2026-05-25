@@ -2426,15 +2426,16 @@ app.get("*", (req, res) => {
   if (req.path.startsWith("/api/") || req.path === "/api") {
     return res.status(404).json({ error: "API endpoint not found" });
   }
-  const indexPath = path.join(staticPath, "index.html");
+
+  const indexPath = path.join(staticPath, "admin.html");
+
   res.sendFile(indexPath, (err) => {
     if (err) {
-      console.error("Error sirviendo index.html:", err);
+      console.error("Error sirviendo admin.html:", err);
       res.status(err.status || 500).send("Error loading app");
     }
   });
 });
-
 /* =========================
    START / SHUTDOWN
    ========================= */
