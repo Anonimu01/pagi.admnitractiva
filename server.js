@@ -465,6 +465,205 @@ function trimSeenSet(set, maxSize = 1000) {
   }
 }
 
+async function sendEmail({ to, subject, html }) {
+  try {
+    // RESEND
+    if (process.env.RESEND_API_KEY) {
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: process.env.SENDER_EMAIL,
+          to,
+          subject,
+          html,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error("RESEND ERROR:", data);
+        return { ok: false, error: data };
+      }
+
+      return {
+        ok: true,
+        provider: "resend",
+        result: data,
+      };
+    }
+
+    console.warn("⚠️ No email provider configured");
+
+    return {
+      ok: false,
+      error: "No email provider configured",
+    };
+  } catch (err) {
+    console.error("sendEmail error:", err);
+
+    return {
+      ok: false,
+      error: err.message,
+    };
+  }
+}
+
+/* ======================================================
+   EMAIL NOTIFICATIONS
+====================================================== */
+async function sendWithdrawEmailNotification({
+  user,
+  status,
+  amount,
+  adminNote = "",
+}) {
+  try {
+    if (!user?.email) return;
+
+    const statusText =
+      status === "approved"
+        ? "APROBADO"
+        : status === "rejected"
+          ? "RECHAZADO"
+          : status === "counter"
+            ? "CONTRAOFERTA"
+            : "ACTUALIZADO";
+
+    const color =
+      status === "approved"
+        ? "#16a34a"
+        : status === "rejected"
+          ? "#dc2626"
+          : "#d4af37";
+
+    await sendEmail({
+      to: user.email,
+      subject: `Estado de retiro: ${statusText}`,
+      html: `
+      <div style="font-family:Arial;padding:20px;background:#0b0b0b;color:#fff">
+        <h2 style="color:${color}">
+          Solicitud de retiro ${statusText}
+        </h2>
+
+        <p>Hola ${user.name || "cliente"},</p>
+
+        <p>Tu solicitud de retiro fue actualizada.</p>
+
+        <div style="padding:15px;background:#151515;border-radius:10px">
+          <p><strong>Monto:</strong> US$${Number(amount || 0).toLocaleString()}</p>
+          <p><strong>Estado:</strong> ${statusText}</p>
+          <p><strong>Nota administrativa:</strong> ${adminNote || "Sin nota"}</p>
+        </div>
+
+        <p style="margin-top:20px">
+          Gracias por utilizar Leones Broker.
+        </p>
+      </div>
+      `,
+    });
+
+    console.log("✅ Email retiro enviado:", user.email);
+  } catch (err) {
+    console.error("❌ sendWithdrawEmailNotification:", err);
+  }
+}
+
+async function sendDocumentEmailNotification({
+  user,
+  status,
+  type,
+  adminNote = "",
+}) {
+  try {
+    if (!user?.email) return;
+
+    const statusText =
+      status === "approved"
+        ? "APROBADO"
+        : status === "rejected"
+          ? "RECHAZADO"
+          : "ACTUALIZADO";
+
+    const color =
+      status === "approved"
+        ? "#16a34a"
+        : status === "rejected"
+          ? "#dc2626"
+          : "#d4af37";
+
+    await sendEmail({
+      to: user.email,
+      subject: `Documento ${statusText}`,
+      html: `
+      <div style="font-family:Arial;padding:20px;background:#0b0b0b;color:#fff">
+        <h2 style="color:${color}">
+          Documento ${statusText}
+        </h2>
+
+        <p>Hola ${user.name || "cliente"},</p>
+
+        <p>Tu documento fue revisado por administración.</p>
+
+        <div style="padding:15px;background:#151515;border-radius:10px">
+          <p><strong>Tipo:</strong> ${type || "Documento"}</p>
+          <p><strong>Estado:</strong> ${statusText}</p>
+          <p><strong>Nota administrativa:</strong> ${adminNote || "Sin nota"}</p>
+        </div>
+
+        <p style="margin-top:20px">
+          Gracias por utilizar Leones Broker.
+        </p>
+      </div>
+      `,
+    });
+
+    console.log("✅ Email documento enviado:", user.email);
+  } catch (err) {
+    console.error("❌ sendDocumentEmailNotification:", err);
+  }
+}
+
+async function sendClientMessageNotification({
+  user,
+  subject,
+  message,
+}) {
+  try {
+    if (!user?.email) return;
+
+    await sendEmail({
+      to: user.email,
+      subject: subject || "Nuevo mensaje de administración",
+      html: `
+      <div style="font-family:Arial;padding:20px;background:#0b0b0b;color:#fff">
+        <h2 style="color:#d4af37">
+          Nuevo mensaje de administración
+        </h2>
+
+        <p>Hola ${user.name || "cliente"},</p>
+
+        <div style="padding:15px;background:#151515;border-radius:10px">
+          ${message || ""}
+        </div>
+
+        <p style="margin-top:20px">
+          Leones Broker
+        </p>
+      </div>
+      `,
+    });
+
+    console.log("✅ Email mensaje enviado:", user.email);
+  } catch (err) {
+    console.error("❌ sendClientMessageNotification:", err);
+  }
+}
+
 /* ======================================================
    LOAD WITHDRAWS
 ====================================================== */
@@ -1369,6 +1568,114 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 }
 
 /* ======================================================
+   EMAIL NOTIFICATIONS
+====================================================== */
+async function sendWithdrawEmailNotification({ user, status, amount, adminNote = "" }) {
+  try {
+    if (typeof sendEmail !== "function") return;
+    if (!user?.email) return;
+
+    const statusText =
+      status === "approved"
+        ? "APROBADO"
+        : status === "rejected"
+          ? "RECHAZADO"
+          : status === "counter"
+            ? "CONTRAOFERTA"
+            : "ACTUALIZADO";
+
+    const color =
+      status === "approved"
+        ? "#16a34a"
+        : status === "rejected"
+          ? "#dc2626"
+          : "#d4af37";
+
+    await sendEmail({
+      to: user.email,
+      subject: `Estado de retiro: ${statusText}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
+          <h2 style="color:${color}">Solicitud de retiro ${statusText}</h2>
+          <p>Hola ${user.name || "cliente"},</p>
+          <p>Tu solicitud de retiro fue actualizada.</p>
+          <div style="padding:15px;background:#f6f6f6;border-radius:10px">
+            <p><strong>Monto:</strong> US$${Number(amount || 0).toLocaleString()}</p>
+            <p><strong>Estado:</strong> ${statusText}</p>
+            <p><strong>Nota administrativa:</strong> ${adminNote || "Sin nota"}</p>
+          </div>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error("sendWithdrawEmailNotification error:", err);
+  }
+}
+
+async function sendDocumentEmailNotification({ user, status, type, adminNote = "" }) {
+  try {
+    if (typeof sendEmail !== "function") return;
+    if (!user?.email) return;
+
+    const statusText =
+      status === "approved"
+        ? "APROBADO"
+        : status === "rejected"
+          ? "RECHAZADO"
+          : "ACTUALIZADO";
+
+    const color =
+      status === "approved"
+        ? "#16a34a"
+        : status === "rejected"
+          ? "#dc2626"
+          : "#d4af37";
+
+    await sendEmail({
+      to: user.email,
+      subject: `Documento ${statusText}`,
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
+          <h2 style="color:${color}">Documento ${statusText}</h2>
+          <p>Hola ${user.name || "cliente"},</p>
+          <p>Tu documento fue revisado por administración.</p>
+          <div style="padding:15px;background:#f6f6f6;border-radius:10px">
+            <p><strong>Tipo:</strong> ${type || "Documento"}</p>
+            <p><strong>Estado:</strong> ${statusText}</p>
+            <p><strong>Nota administrativa:</strong> ${adminNote || "Sin nota"}</p>
+          </div>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error("sendDocumentEmailNotification error:", err);
+  }
+}
+
+async function sendClientMessageNotification({ user, subject, message }) {
+  try {
+    if (typeof sendEmail !== "function") return;
+    if (!user?.email) return;
+
+    await sendEmail({
+      to: user.email,
+      subject: subject || "Nuevo mensaje de administración",
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.6;color:#111">
+          <h2 style="color:#d4af37">Nuevo mensaje de administración</h2>
+          <p>Hola ${user.name || "cliente"},</p>
+          <div style="padding:15px;background:#f6f6f6;border-radius:10px">
+            ${message || ""}
+          </div>
+        </div>
+      `,
+    });
+  } catch (err) {
+    console.error("sendClientMessageNotification error:", err);
+  }
+}
+
+/* ======================================================
    AUTH
 ====================================================== */
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
@@ -1406,8 +1713,6 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
     return res.status(500).json({ ok: false, msg: "Error del servidor" });
   }
 });
-
-
 
        /* ======================================================
    UPDATE BALANCE COMPATIBILITY
@@ -1825,6 +2130,15 @@ app.post(
 
       await w.save();
 
+      const user = await User.findById(userId).catch(() => null);
+
+      await sendWithdrawEmailNotification({
+        user,
+        status: "approved",
+        amount,
+        adminNote,
+      });
+
       const payload = {
         ok: true,
         id: String(w._id),
@@ -1874,6 +2188,15 @@ app.post(
 
       await w.save();
 
+      const user = await User.findById(userId).catch(() => null);
+
+      await sendWithdrawEmailNotification({
+        user,
+        status: "rejected",
+        amount,
+        adminNote,
+      });
+
       const payload = {
         ok: true,
         id: String(w._id),
@@ -1891,6 +2214,123 @@ app.post(
       return res.status(500).json({
         ok: false,
         msg: "Error rechazando retiro",
+        error: err?.message || String(err),
+      });
+    }
+  }
+);
+
+/* ======================================================
+   WITHDRAW MESSAGES
+====================================================== */
+app.post(
+  ["/api/admin/withdraw/message", "/api/admin/withdrawals/message"],
+  ensureAdminAuth,
+  async (req, res) => {
+    try {
+      const { id, adminMessage = "" } = req.body || {};
+      if (!id) {
+        return res.status(400).json({ ok: false, msg: "id requerido" });
+      }
+      if (!adminMessage) {
+        return res.status(400).json({ ok: false, msg: "adminMessage requerido" });
+      }
+
+      const w = await Withdraw.findById(id).catch(() => null);
+      if (!w) {
+        return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
+      }
+
+      w.adminMessage = adminMessage;
+      w.updatedAt = new Date();
+      await w.save();
+
+      const user = await User.findById(w.userId).catch(() => null);
+
+      await sendClientMessageNotification({
+        user,
+        subject: "Nuevo mensaje sobre tu retiro",
+        message: adminMessage,
+      });
+
+      const payload = {
+        ok: true,
+        id: String(w._id),
+        userId: String(w.userId || ""),
+        adminMessage,
+        status: w.status || "pending",
+        updatedAt: new Date(),
+      };
+
+      emitWithdrawRealtime(payload);
+      return res.json(payload);
+    } catch (err) {
+      console.error("POST withdraw/message error:", err);
+      return res.status(500).json({
+        ok: false,
+        msg: "Error enviando mensaje",
+        error: err?.message || String(err),
+      });
+    }
+  }
+);
+
+/* ======================================================
+   WITHDRAW COUNTER OFFER
+====================================================== */
+app.post(
+  ["/api/admin/withdraw/counter-offer", "/api/admin/withdrawals/counter-offer"],
+  ensureAdminAuth,
+  async (req, res) => {
+    try {
+      const { id, counterAmount, counterNote = "" } = req.body || {};
+      if (!id) {
+        return res.status(400).json({ ok: false, msg: "id requerido" });
+      }
+
+      const numericCounterAmount = Number(counterAmount);
+      if (!Number.isFinite(numericCounterAmount) || numericCounterAmount <= 0) {
+        return res.status(400).json({ ok: false, msg: "counterAmount inválido" });
+      }
+
+      const w = await Withdraw.findById(id).catch(() => null);
+      if (!w) {
+        return res.status(404).json({ ok: false, msg: "Retiro no encontrado" });
+      }
+
+      const user = await User.findById(w.userId).catch(() => null);
+
+      w.status = "counter";
+      w.counterAmount = numericCounterAmount;
+      w.counterNote = counterNote;
+      w.updatedAt = new Date();
+
+      await w.save();
+
+      await sendWithdrawEmailNotification({
+        user,
+        status: "counter",
+        amount: numericCounterAmount,
+        adminNote: counterNote,
+      });
+
+      const payload = {
+        ok: true,
+        id: String(w._id),
+        userId: String(w.userId || ""),
+        counterAmount: numericCounterAmount,
+        counterNote,
+        status: "counter",
+        updatedAt: new Date(),
+      };
+
+      emitWithdrawRealtime(payload);
+      return res.json(payload);
+    } catch (err) {
+      console.error("POST withdraw/counter-offer error:", err);
+      return res.status(500).json({
+        ok: false,
+        msg: "Error enviando contraoferta",
         error: err?.message || String(err),
       });
     }
@@ -2013,7 +2453,7 @@ app.post("/api/withdraw/request", async (req, res) => {
   }
 });
 
-   /* ======================================================
+/* ======================================================
    DEPOSIT / WITHDRAW
 ====================================================== */
 app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
@@ -2206,6 +2646,15 @@ app.post(
       doc.updatedAt = new Date();
       await doc.save();
 
+      const user = await User.findById(doc.userId).catch(() => null);
+
+      await sendDocumentEmailNotification({
+        user,
+        status: "approved",
+        type: doc.type,
+        adminNote,
+      });
+
       return res.json({ ok: true, msg: "Documento aprobado", id: String(doc._id) });
     } catch (err) {
       console.error("document approve error:", err);
@@ -2229,6 +2678,15 @@ app.post(
       doc.adminNote = adminNote;
       doc.updatedAt = new Date();
       await doc.save();
+
+      const user = await User.findById(doc.userId).catch(() => null);
+
+      await sendDocumentEmailNotification({
+        user,
+        status: "rejected",
+        type: doc.type,
+        adminNote,
+      });
 
       return res.json({ ok: true, msg: "Documento rechazado", id: String(doc._id) });
     } catch (err) {
@@ -2297,617 +2755,6 @@ app.post("/api/documents/upload", async (req, res) => {
       message: err?.message || "Error interno",
     });
   }
-});
-
-/* ======================================================
-   MARKET / ACCOUNT / POSITIONS / TRADE / PRICE
-====================================================== */
-const simulatedPrices = new Map();
-
-function generateBasePrice(symbol = "") {
-  const s = String(symbol).toUpperCase();
-  if (s.includes("BTC")) return 65000 + Math.random() * 5000;
-  if (s.includes("ETH")) return 3000 + Math.random() * 300;
-  if (s.includes("XAU")) return 2300 + Math.random() * 50;
-  if (s.includes("NVDA")) return 900 + Math.random() * 100;
-  if (s.includes("AAPL")) return 180 + Math.random() * 20;
-  if (s.includes("TSLA")) return 200 + Math.random() * 50;
-  return 50 + Math.random() * 500;
-}
-
-function getSimulatedPrice(symbol) {
-  symbol = String(symbol || "").toUpperCase().trim();
-  if (!simulatedPrices.has(symbol)) simulatedPrices.set(symbol, generateBasePrice(symbol));
-
-  let current = simulatedPrices.get(symbol);
-  const movement = (Math.random() - 0.5) * (current * 0.01);
-  current += movement;
-  if (current <= 0) current = generateBasePrice(symbol);
-
-  simulatedPrices.set(symbol, current);
-  return Number(current.toFixed(2));
-}
-
-app.get("/api/price", async (req, res) => {
-  try {
-    const rawSymbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "");
-    const symbol = String(rawSymbol || "").trim().toUpperCase();
-    if (!symbol) return res.status(400).json({ ok: false, error: "Símbolo requerido" });
-
-    const price = getSimulatedPrice(symbol);
-    return res.json({ ok: true, simulated: true, symbol, price });
-  } catch (err) {
-    console.error("❌ PRICE ERROR:", err);
-    return res.json({ ok: true, simulated: true, symbol: "FALLBACK", price: 100 });
-  }
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    ok: true,
-    env: process.env.NODE_ENV || "dev",
-    emailProvider: process.env.RESEND_API_KEY
-      ? "resend"
-      : process.env.EMAIL_USER || process.env.SMTP_USER
-        ? "smtp"
-        : "none",
-    db: mongoose.connection.name || null,
-    adminApiKeyConfigured: !!process.env.ADMIN_API_KEY,
-  });
-});
-
-app.locals.sendVerificationEmail = async ({ user, verificationLink }) => {
-  try {
-    const to = user?.email || user?.address || user;
-    if (!to) return { ok: false, error: "missing_recipient" };
-    if (!verificationLink) return { ok: false, error: "missing_verification_link" };
-
-    const name = user?.name || "usuario";
-
-    return await sendEmail({
-      to,
-      subject: "Verifica tu cuenta - Leones Broker",
-      html: `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111"><h2>Hola ${name}, verifica tu cuenta</h2><p>Haz clic en el botón de abajo para activar tu cuenta:</p><p><a href="${verificationLink}" style="display:inline-block;background:#d4af37;color:#000;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:bold">Verificar cuenta</a></p><p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p><p>${verificationLink}</p></div>`,
-    });
-  } catch (err) {
-    console.error("[MAIL] sendVerificationEmail error:", err?.message || err);
-    return { ok: false, error: err?.message || String(err) };
-  }
-};
-
-app.post("/api/_send_test_email", async (req, res) => {
-  const to = (req.body && req.body.to) || process.env.SENDER_EMAIL;
-  if (!to) {
-    return res.status(400).json({
-      ok: false,
-      message: "Necesitas enviar 'to' en el body o configurar SENDER_EMAIL",
-    });
-  }
-
-  const subject = req.body.subject || "Prueba de correo - Leones Broker";
-  const html =
-    req.body.html ||
-    `<p>Esto es una prueba desde el servidor de Leones Broker. Si recibes este correo, Resend/SMTP está funcionando.</p>`;
-
-  try {
-    const r = await sendEmail({ to, subject, html });
-    if (r.ok) {
-      return res.json({
-        ok: true,
-        message: "Correo enviado",
-        provider: r.provider,
-        result: r.result || r.info || r.resp,
-      });
-    }
-
-    return res.status(500).json({
-      ok: false,
-      message: "No se pudo enviar correo",
-      error: r.error,
-    });
-  } catch (err) {
-    console.error("test email error:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Error interno enviando correo",
-      error: err && err.message ? err.message : String(err),
-    });
-  }
-});
-
-app.get("/api/markets", (req, res) => res.json({ markets: ["Crypto", "Stocks", "Forex", "Indices", "Futures", "Bonds"] }));
-app.get("/api/market/list", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
-app.get("/api/market/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
-app.get("/api/markets/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
-app.get("/api/api/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
-app.get("/api/api/markets", (req, res) => res.json({ markets: ["Crypto", "Stocks", "Forex", "Indices"] }));
-
-app.get("/api/quotes", async (req, res) =>
-  res.json([{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }])
-);
-
-app.get("/api/latest", async (req, res) => {
-  try {
-    const symbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "").trim().toUpperCase();
-    if (!symbol) {
-      return res.json({
-        ok: true,
-        symbol: null,
-        price: null,
-        currentPrice: null,
-        close: null,
-        last: null,
-        updatedAt: new Date().toISOString(),
-        message: "symbol_missing",
-      });
-    }
-
-    const price = getSimulatedPrice(symbol);
-    return res.json({
-      ok: true,
-      symbol,
-      price,
-      currentPrice: price,
-      close: price,
-      last: price,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error("/api/latest error:", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-app.get("/api/market/quotes", async (req, res) =>
-  res.json({ ok: true, quotes: [{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }] })
-);
-
-app.get("/api/market/latest", async (req, res) => {
-  try {
-    const symbol = String(req.query.symbol || req.query.tvSymbol || req.query.selectedSymbol || "").trim().toUpperCase();
-    if (!symbol) {
-      return res.json({
-        ok: true,
-        symbol: null,
-        price: null,
-        currentPrice: null,
-        close: null,
-        last: null,
-        updatedAt: new Date().toISOString(),
-        message: "symbol_missing",
-      });
-    }
-
-    const price = getSimulatedPrice(symbol);
-    return res.json({
-      ok: true,
-      symbol,
-      price,
-      currentPrice: price,
-      close: price,
-      last: price,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.error("/api/market/latest error:", e);
-    return res.status(500).json({ ok: false, error: "server_error" });
-  }
-});
-
-app.get("/api/market/polygon/quotes", async (req, res) =>
-  res.json({ ok: true, quotes: [{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }] })
-);
-
-app.get("/api/market/polygon/symbols", (req, res) =>
-  res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }])
-);
-
-app.get("/api/symbols", (req, res) =>
-  res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }])
-);
-
-/* ======================================================
-   CLIENT ACCOUNT / WALLET / POSITIONS
-====================================================== */
-app.get("/api/wallet", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const payload = await buildAccountForUser(user);
-    return res.json({
-      ok: true,
-      wallet: payload.wallet,
-      account: payload.account,
-      balance: payload.account.balance,
-      balanceOwn: payload.account.balanceOwn,
-      availableBalance: payload.account.availableBalance,
-      equity: payload.account.equity,
-      marginUsed: payload.account.marginUsed,
-      freeMargin: payload.account.freeMargin,
-      marginLevel: payload.account.marginLevel,
-      leverageFactor: payload.account.leverageFactor,
-      currency: payload.account.currency,
-      transactions: payload.transactions,
-    });
-  } catch (e) {
-    console.error("/api/wallet error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-app.get("/api/billetera", (req, res) => res.redirect(307, "/api/wallet"));
-
-app.get("/api/positions", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const positions = await safeLoadOpenPositionsForUser(user._id);
-    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
-  } catch (e) {
-    console.error("/api/positions error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-app.get("/api/posiciones", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const positions = await safeLoadOpenPositionsForUser(user._id);
-    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
-  } catch (e) {
-    console.error("/api/posiciones error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-app.get("/api/positions/all", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const positions = await safeLoadAllPositionsForUser(user._id);
-    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
-  } catch (e) {
-    console.error("/api/positions/all error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-app.get("/api/posiciones/all", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const positions = await safeLoadAllPositionsForUser(user._id);
-    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
-  } catch (e) {
-    console.error("/api/posiciones/all error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-app.get("/api/trade/positions", async (req, res) => {
-  try {
-    const user = await getUserDocFromBearer(req);
-    if (!user) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const positions = await safeLoadOpenPositionsForUser(user._id);
-    return res.json({ ok: true, positions, data: positions, items: positions, count: positions.length });
-  } catch (e) {
-    console.error("/api/trade/positions error", e);
-    return res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-/* ======================================================
-   SOCKET.IO
-====================================================== */
-io.on("connection", (socket) => {
-  console.log("✅ socket connected", socket.id);
-
-  try {
-    socket.emit("prices_snapshot", { BTCUSDT: { price: getSimulatedPrice("BTCUSDT") } });
-  } catch {
-    socket.emit("prices_snapshot", {});
-  }
-
-  socket.on("request_withdraws", async (filters = {}) => {
-    try {
-      const withdraws = await loadWithdraws({
-        userId: filters.userId || null,
-        status: filters.status || "all",
-        limit: Math.min(Number(filters.limit || 100) || 100, 500),
-      });
-
-      socket.emit("withdraws_snapshot", {
-        ok: true,
-        count: withdraws.length,
-        withdraws,
-        data: withdraws,
-        items: withdraws,
-      });
-
-      console.log("📤 withdraws_snapshot enviado");
-    } catch (err) {
-      console.error("request_withdraws error:", err);
-      socket.emit("withdraws_snapshot", { ok: false, error: err?.message || "error" });
-    }
-  });
-
-  socket.on("request_documents", async (filters = {}) => {
-    try {
-      const documents = await loadDocuments({
-        userId: filters.userId || null,
-        status: filters.status || "all",
-        limit: Math.min(Number(filters.limit || 100) || 100, 500),
-      });
-
-      socket.emit("documents_snapshot", {
-        ok: true,
-        count: documents.length,
-        documents,
-        data: documents,
-        items: documents,
-      });
-
-      console.log("📤 documents_snapshot enviado");
-    } catch (err) {
-      console.error("request_documents error:", err);
-      socket.emit("documents_snapshot", { ok: false, error: err?.message || "error" });
-    }
-  });
-
-  socket.on("join_user_room", (userId) => {
-    if (!userId) return;
-    socket.join(`user:${userId}`);
-    console.log(`👤 socket ${socket.id} joined user:${userId}`);
-  });
-
-  socket.on("join_admin", () => {
-    socket.join("admins");
-    console.log(`🛡️ admin joined: ${socket.id}`);
-  });
-
-  socket.on("disconnect", () => {
-    console.log("❌ socket disconnected", socket.id);
-  });
-});
-
-/* ======================================================
-   REALTIME HELPERS
-====================================================== */
-async function emitWithdrawUpdateById(withdrawId) {
-  try {
-    const withdraw = await Withdraw.findById(withdrawId).lean().catch(() => null);
-    if (!withdraw) return;
-
-    io.emit("withdraw:update", withdraw);
-    io.to("admins").emit("admin:withdraw:update", withdraw);
-    io.to(`user:${withdraw.userId}`).emit("user:withdraw:update", withdraw);
-
-    console.log("🚀 withdraw:update emitido", withdrawId);
-  } catch (err) {
-    console.error("emitWithdrawUpdateById error:", err);
-  }
-}
-
-async function emitDocumentUpdate(documentId) {
-  try {
-    const document = await Document.findById(documentId).lean().catch(() => null);
-    if (!document) return;
-
-    io.emit("document:update", document);
-    io.to("admins").emit("admin:document:update", document);
-    io.to(`user:${document.userId}`).emit("user:document:update", document);
-
-    console.log("🚀 document:update emitido", documentId);
-  } catch (err) {
-    console.error("emitDocumentUpdate error:", err);
-  }
-}
-
-/* ======================================================
-   STATIC
-====================================================== */
-const staticCandidates = ["public", "publico", "público", "Public", "Publico"];
-let staticDirName = null;
-
-for (const cand of staticCandidates) {
-  const p = path.join(__dirname, cand);
-  try {
-    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
-      staticDirName = cand;
-      break;
-    }
-  } catch {}
-}
-
-if (!staticDirName) {
-  staticDirName = "public";
-  console.warn(`WARN: No se encontró carpeta estática entre ${staticCandidates.join(", ")}. Usando fallback '${staticDirName}'.`);
-} else {
-  console.log(`Static folder detected: '${staticDirName}'`);
-}
-
-const staticPath = path.join(__dirname, staticDirName);
-const jsDirPath = path.join(staticPath, "js");
-
-function stripScriptWrappers(source) {
-  let text = String(source ?? "");
-  text = text.replace(/^\uFEFF/, "");
-  const trimmed = text.trim();
-  const startsWithScript = /^<script\b[^>]*>/i.test(trimmed);
-  const endsWithScript = /<\/script>\s*$/.test(trimmed);
-
-  if (startsWithScript && endsWithScript) {
-    text = trimmed.replace(/^<script\b[^>]*>/i, "").replace(/<\/script>\s*$/, "");
-  }
-
-  return text;
-}
-
-function resolveJsCandidate(requestPath) {
-  const clean = String(requestPath || "").split("?")[0];
-  const normalized = clean.replace(/\\/g, "/");
-  const base = path.basename(normalized);
-  const candidates = [];
-
-  if (normalized.startsWith("/public/js/")) {
-    candidates.push(path.join(staticPath, normalized.replace(/^\/public\//, "")));
-  }
-
-  if (normalized.startsWith("/js/")) {
-    candidates.push(path.join(jsDirPath, normalized.slice("/js/".length)));
-    candidates.push(path.join(staticPath, normalized.replace(/^\/+/, "")));
-  }
-
-  if (normalized.startsWith("/public/")) {
-    candidates.push(path.join(staticPath, normalized.replace(/^\/public\//, "")));
-  }
-
-  if (base) {
-    candidates.push(path.join(staticPath, base));
-    candidates.push(path.join(jsDirPath, base));
-  }
-
-  const uniqueCandidates = [...new Set(candidates)];
-  return uniqueCandidates.find((p) => {
-    try {
-      return fs.existsSync(p) && fs.statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  });
-}
-
-app.use(async (req, res, next) => {
-  const pathname = req.path || "";
-  if (!pathname.endsWith(".js")) return next();
-
-  try {
-    const candidate = resolveJsCandidate(pathname);
-    if (candidate) {
-      const raw = await fs.promises.readFile(candidate, "utf8");
-      const cleaned = stripScriptWrappers(raw);
-      res.status(200).type("application/javascript; charset=utf-8").send(cleaned);
-      return;
-    }
-
-    res.status(404).type("application/javascript; charset=utf-8").send(`console.error("JS missing: ${pathname}");`);
-  } catch (err) {
-    console.error("Error sirviendo JS:", err);
-    res.status(500).type("application/javascript; charset=utf-8").send(`console.error("JS server error");`);
-  }
-});
-
-app.use("/public", express.static(staticPath));
-app.use("/js", express.static(jsDirPath));
-app.use(express.static(staticPath));
-
-app.use("/api/api", (req, res) => {
-  const newUrl = req.originalUrl.replace(/^\/api\/api/, "/api");
-  return res.redirect(307, newUrl);
-});
-
-app.get("*", (req, res) => {
-  if (req.path.startsWith("/api/") || req.path === "/api") {
-    return res.status(404).json({ error: "API endpoint not found" });
-  }
-
-  const indexPath = path.join(staticPath, "admin.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      console.error("Error sirviendo admin.html:", err);
-      res.status(err.status || 500).send("Error loading app");
-    }
-  });
-});
-
-/* =========================
-   START / SHUTDOWN
-========================= */
-const PORT = process.env.PORT || 3000;
-
-const serverInstance = server.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server running on ${PORT}`);
-  console.log("ENV STATUS:");
-  console.log("RESEND:", !!process.env.RESEND_API_KEY);
-  console.log("SENDER:", !!process.env.SENDER_EMAIL);
-  console.log("MONGO:", !!process.env.MONGO_URI);
-  console.log("ADMIN_API_KEY:", !!process.env.ADMIN_API_KEY);
-  console.log("POLYGON:", !!process.env.POLYGON_API_KEY);
-
-  if (!process.env.POLYGON_API_KEY) {
-    console.warn("⚠️ POLYGON_API_KEY no configurado — realtime limitado");
-  }
-
-  if (!process.env.RESEND_API_KEY) {
-    console.warn("⚠️ Resend no configurado — emails pueden usar SMTP o simulación");
-  }
-});
-
-let shuttingDown = false;
-
-const safeClosePolygonSocket = async () => {
-  if (!PolygonSocket) return;
-};
-
-const gracefulShutdown = async (signal) => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-
-  console.log(`📴 ${signal} recibido. Cerrando...`);
-
-  const timeout = setTimeout(() => {
-    console.warn("Forzando cierre...");
-    process.exit(1);
-  }, 30000);
-  timeout.unref();
-
-  try {
-    for (const t of liveSyncTimers?.values?.() || []) clearTimeout(t);
-    if (liveSyncTimers?.clear) liveSyncTimers.clear();
-    if (openTradeLocks?.clear) openTradeLocks.clear();
-    if (activeOrders?.clear) activeOrders.clear();
-
-    await new Promise((resolve, reject) => {
-      serverInstance.close((err) => {
-        if (err) return reject(err);
-        resolve();
-      });
-    });
-
-    if (typeof global?.stopRiskWatcher === "function") {
-      try {
-        global.stopRiskWatcher();
-      } catch (e) {
-        console.warn("stopRiskWatcher threw:", e);
-      }
-    }
-
-    await mongoose.disconnect();
-    clearTimeout(timeout);
-    process.exit(0);
-  } catch (err) {
-    console.error("Shutdown error:", err);
-    clearTimeout(timeout);
-    process.exit(1);
-  }
-};
-
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("unhandledRejection", (r) => {
-  console.error("UnhandledRejection:", r);
-  gracefulShutdown("unhandledRejection").catch(() => {});
-});
-process.on("uncaughtException", (e) => {
-  console.error("UncaughtException:", e);
-  gracefulShutdown("uncaughtException").catch(() => {});
 });
 
 module.exports = app;
