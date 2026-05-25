@@ -13,31 +13,17 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 
-/* ======================================================
-   ROUTES IMPORTS
-====================================================== */
-
-/* EVITA QUE EXPLOTE SI NO EXISTE */
-let marketRoutesFactory = null;
-
-try {
-  marketRoutesFactory = require("./routes/marketRoutes");
-} catch (err) {
-  console.warn(
-    "⚠️ No se pudo cargar marketRoutes:",
-    err.message
-  );
+function tryRequire(modulePath, fallback = null) {
+  try {
+    return require(modulePath);
+  } catch (err) {
+    console.warn(`⚠️ No se pudo cargar ${modulePath}:`, err.message);
+    return fallback;
+  }
 }
 
-/* ======================================================
-   APP + SERVER
-====================================================== */
-
 const app = express();
-
 const server = http.createServer(app);
-
-/* SOCKET IO */
 
 const io = new Server(server, {
   cors: {
@@ -45,10 +31,6 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
   },
 });
-
-/* ======================================================
-   FETCH
-====================================================== */
 
 const fetchFn =
   typeof globalThis.fetch === "function"
@@ -59,9 +41,7 @@ const fetchFn =
    CONFIG
 ====================================================== */
 
-const CORE_API_URL = String(
-  process.env.CORE_API_URL || ""
-).replace(/\/+$/, "");
+const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
 
 const CORE_USERS_ENDPOINTS = (
   process.env.CORE_USERS_ENDPOINTS ||
@@ -71,106 +51,85 @@ const CORE_USERS_ENDPOINTS = (
   .map((s) => s.trim())
   .filter(Boolean);
 
-const ADMIN_EMAIL =
-  process.env.ADMIN_EMAIL ||
-  process.env.ADMIN_USER ||
-  "";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
+const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
+const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
 
-const ADMIN_PASS =
-  process.env.ADMIN_PASS ||
-  process.env.ADMIN_PASSWORD ||
-  "";
-
-const JWT_SECRET =
-  process.env.JWT_SECRET ||
-  process.env.ADMIN_JWT_SECRET ||
-  "admin-secret-dev";
-
-const ADMIN_API_KEY =
-  process.env.ADMIN_API_KEY || "";
-
-/* ======================================================
-   ZOHO CONFIG
-====================================================== */
-
-const ZOHO_ENABLED =
-  String(
-    process.env.ZOHO_ENABLED || "true"
-  ).toLowerCase() !== "false";
-
-const ZOHO_CLIENT_ID =
-  process.env.ZOHO_CLIENT_ID || "";
-
-const ZOHO_CLIENT_SECRET =
-  process.env.ZOHO_CLIENT_SECRET || "";
-
-const ZOHO_REFRESH_TOKEN =
-  process.env.ZOHO_REFRESH_TOKEN || "";
-
-const ZOHO_ACCOUNTS_URL = (
-  process.env.ZOHO_ACCOUNTS_URL ||
-  "https://accounts.zoho.com"
-).replace(/\/+$/, "");
-
-const ZOHO_API_BASE_URL = (
-  process.env.ZOHO_API_BASE_URL ||
-  "https://www.zohoapis.com"
-).replace(/\/+$/, "");
-
-const ZOHO_MODULE =
-  process.env.ZOHO_MODULE || "Leads";
-
-const ZOHO_FALLBACK_MODULE =
-  process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-
-const ZOHO_LAST_NAME_FIELD =
-  process.env.ZOHO_LAST_NAME_FIELD ||
-  "Last_Name";
-
-const ZOHO_EMAIL_FIELD =
-  process.env.ZOHO_EMAIL_FIELD || "Email";
-
-const ZOHO_PHONE_FIELD =
-  process.env.ZOHO_PHONE_FIELD || "Phone";
-
-const ZOHO_ADDRESS_FIELD =
-  process.env.ZOHO_ADDRESS_FIELD ||
-  "Street";
-
-const ZOHO_FIRST_NAME_FIELD =
-  process.env.ZOHO_FIRST_NAME_FIELD ||
-  "First_Name";
-
-const ZOHO_COMPANY_FIELD =
-  process.env.ZOHO_COMPANY_FIELD ||
-  "Company";
-
-const ZOHO_SYNC_INTERVAL_MS = Number(
-  process.env.ZOHO_SYNC_INTERVAL_MS ||
-    300000
-);
+const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
+const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
+const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
+const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
+const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
+const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
+const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
+const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
+const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
+const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
+const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
+const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
+const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
+const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
 
 /* ======================================================
-   WARNINGS
+   HELPERS AUTH
 ====================================================== */
 
-if (!CORE_API_URL) {
-  console.warn(
-    "⚠️ CORE_API_URL no definido. Se usará modo local si hace falta."
+function signAdminToken(payload = {}) {
+  return jwt.sign(
+    {
+      ...payload,
+      role: "admin",
+    },
+    JWT_SECRET,
+    { expiresIn: "8h" }
   );
 }
 
-if (
-  ZOHO_ENABLED &&
-  (
-    !ZOHO_CLIENT_ID ||
-    !ZOHO_CLIENT_SECRET ||
-    !ZOHO_REFRESH_TOKEN
-  )
-) {
-  console.warn(
-    "⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN."
-  );
+function ensureAdminAuth(req, res, next) {
+  try {
+    const authHeader = String(req.headers.authorization || "");
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const cookieToken = req.cookies?.admin_token || req.headers["x-admin-token"] || "";
+    const token = bearer || cookieToken;
+
+    if (ADMIN_API_KEY && String(req.headers["x-api-key"] || "") === ADMIN_API_KEY) {
+      return next();
+    }
+
+    if (!token) {
+      return res.status(401).json({ ok: false, msg: "No autorizado" });
+    }
+
+    const decoded = jwt.verify(String(token), JWT_SECRET);
+    req.admin = decoded;
+    return next();
+  } catch (err) {
+    return res.status(401).json({ ok: false, msg: "Token inválido o expirado" });
+  }
+}
+
+/* ======================================================
+   ROUTES IMPORTS
+====================================================== */
+
+const authRoutes = tryRequire("./routes/authRoutes");
+const userRoutes = tryRequire("./routes/userRoutes");
+const verificationRoutes = tryRequire("./routes/verificationRoutes");
+const walletRoutes = tryRequire("./routes/walletRoutes");
+const positionsRoutes = tryRequire("./routes/positionsRoutes");
+const tradeRoutes = tryRequire("./routes/tradeRoutes");
+const accountRoutes = tryRequire("./routes/accountRoutes");
+const passwordRoutes = tryRequire("./routes/passwordRoutes");
+const withdrawRoutes = tryRequire("./routes/withdrawRoutes");
+
+/* Si existe marketRoutes, lo montamos; si no, el server sigue vivo */
+let marketRoutesFactory = null;
+try {
+  marketRoutesFactory = require("./routes/marketRoutes");
+} catch (err) {
+  console.warn("⚠️ No se pudo cargar marketRoutes:", err.message);
 }
 
 /* ======================================================
@@ -179,14 +138,18 @@ if (
 
 app.use(cors());
 
-app.use(express.json({
-  limit: "50mb",
-}));
+app.use(
+  express.json({
+    limit: "50mb",
+  })
+);
 
-app.use(express.urlencoded({
-  extended: true,
-  limit: "50mb",
-}));
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "50mb",
+  })
+);
 
 app.use(
   rateLimit({
@@ -199,70 +162,33 @@ app.use(
    MULTER DOCUMENT UPLOAD
 ====================================================== */
 
-const uploadRoot = path.join(
-  process.cwd(),
-  "uploads"
-);
-
-const documentsDir = path.join(
-  uploadRoot,
-  "documents"
-);
-
-/* Crear carpetas automáticamente */
+const uploadRoot = path.join(process.cwd(), "uploads");
+const documentsDir = path.join(uploadRoot, "documents");
 
 if (!fs.existsSync(uploadRoot)) {
-  fs.mkdirSync(uploadRoot, {
-    recursive: true,
-  });
+  fs.mkdirSync(uploadRoot, { recursive: true });
 }
 
 if (!fs.existsSync(documentsDir)) {
-  fs.mkdirSync(documentsDir, {
-    recursive: true,
-  });
+  fs.mkdirSync(documentsDir, { recursive: true });
 }
 
-/* Storage */
-
-const documentStorage =
-  multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, documentsDir);
-    },
-
-    filename: (req, file, cb) => {
-      const unique =
-        Date.now() +
-        "-" +
-        Math.round(
-          Math.random() * 1e9
-        );
-
-      cb(
-        null,
-        unique +
-          path.extname(
-            file.originalname || ""
-          )
-      );
-    },
-  });
-
-/* Upload */
+const documentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, documentsDir);
+  },
+  filename: (req, file, cb) => {
+    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, unique + path.extname(file.originalname || ""));
+  },
+});
 
 const uploadDocument = multer({
   storage: documentStorage,
-
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
-
-  fileFilter: (
-    req,
-    file,
-    cb
-  ) => {
+  fileFilter: (req, file, cb) => {
     cb(null, true);
   },
 });
@@ -271,51 +197,27 @@ const uploadDocument = multer({
    STATIC FILES
 ====================================================== */
 
-app.use(
-  "/uploads",
-  express.static(uploadRoot)
-);
+app.use("/uploads", express.static(uploadRoot));
 
 /* ======================================================
    DB
 ====================================================== */
 
-Promise.resolve(
-  connectDB()
-).catch((err) => {
-  console.error(
-    "❌ Error conectando DB:",
-    err?.message || err
-  );
+Promise.resolve(connectDB()).catch((err) => {
+  console.error("❌ Error conectando DB:", err?.message || err);
 });
 
-mongoose.connection.on(
-  "connected",
-  () => {
-    console.log(
-      "✅ Mongo conectado"
-    );
-  }
-);
+mongoose.connection.on("connected", () => {
+  console.log("✅ Mongo conectado");
+});
 
-mongoose.connection.on(
-  "error",
-  (err) => {
-    console.error(
-      "❌ Mongo connection error:",
-      err
-    );
-  }
-);
+mongoose.connection.on("error", (err) => {
+  console.error("❌ Mongo connection error:", err);
+});
 
-mongoose.connection.on(
-  "disconnected",
-  () => {
-    console.warn(
-      "⚠️ Mongo disconnected"
-    );
-  }
-);
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ Mongo disconnected");
+});
 
 /* ======================================================
    MARKET ROUTES
@@ -323,46 +225,44 @@ mongoose.connection.on(
 
 if (marketRoutesFactory) {
   try {
-    app.use(
-      "/api/market",
-      typeof marketRoutesFactory ===
-        "function"
-        ? marketRoutesFactory({
-            io,
-          })
-        : marketRoutesFactory
-    );
+    const marketRouter =
+      typeof marketRoutesFactory === "function"
+        ? marketRoutesFactory({ io })
+        : marketRoutesFactory;
 
-    console.log(
-      "✅ /api/market montado"
-    );
+    if (marketRouter) {
+      app.use("/api/market", marketRouter);
+      console.log("✅ /api/market montado");
+    }
   } catch (err) {
-    console.error(
-      "❌ No se pudo montar /api/market:",
-      err.message
-    );
+    console.error("❌ No se pudo montar /api/market:", err.message);
   }
 }
+
+/* ======================================================
+   ROUTE MOUNTS (PROTEGIDOS)
+====================================================== */
+
+if (authRoutes) app.use("/api/auth", authRoutes);
+if (userRoutes) app.use("/api/users", userRoutes);
+if (verificationRoutes) app.use("/api/verification", verificationRoutes);
+if (walletRoutes) app.use("/api/wallet", walletRoutes);
+if (positionsRoutes) app.use("/api/positions", positionsRoutes);
+if (tradeRoutes) app.use("/api/trade", tradeRoutes);
+if (accountRoutes) app.use("/api/account", accountRoutes);
+if (passwordRoutes) app.use("/api/password", passwordRoutes);
+if (withdrawRoutes) app.use("/api/withdraws", withdrawRoutes);
 
 /* ======================================================
    SOCKET EVENTS
 ====================================================== */
 
 io.on("connection", (socket) => {
-  console.log(
-    "🔌 Socket connected:",
-    socket.id
-  );
+  console.log("🔌 Socket connected:", socket.id);
 
-  socket.on(
-    "disconnect",
-    () => {
-      console.log(
-        "❌ Socket disconnected:",
-        socket.id
-      );
-    }
-  );
+  socket.on("disconnect", () => {
+    console.log("❌ Socket disconnected:", socket.id);
+  });
 });
 
 /* ======================================================
@@ -372,8 +272,7 @@ io.on("connection", (socket) => {
 app.get("/", (req, res) => {
   res.json({
     ok: true,
-    message:
-      "Servidor funcionando correctamente",
+    message: "Servidor funcionando correctamente",
   });
 });
 
@@ -381,14 +280,13 @@ app.get("/", (req, res) => {
    START SERVER
 ====================================================== */
 
-const PORT =
-  process.env.PORT || 10000;
+const PORT = process.env.PORT || 10000;
 
-server.listen(PORT, () => {
-  console.log(
-    `🚀 Server running on port ${PORT}`
-  );
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
+
+module.exports = app;
 /* ======================================================
    MODELOS
 ====================================================== */
