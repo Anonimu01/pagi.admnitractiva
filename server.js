@@ -75,7 +75,14 @@ const ALLOWED_ORIGINS =
 
 function safeRequire(mod) {
   try {
-    return require(mod);
+    const loaded = require(mod);
+
+    if (!loaded) {
+      console.warn(`⚠️ ${mod} devolvió null`);
+      return null;
+    }
+
+    return loaded;
   } catch (err) {
     console.warn(`⚠️ No se pudo cargar ${mod}`);
     return null;
@@ -86,21 +93,39 @@ function safeRequire(mod) {
    ROUTES
 ====================================================== */
 
-const authRoutes = safeRequire("./routes/auth.routes.js");
-const userRoutes = safeRequire("./routes/user.routes.js");
-const verificationRoutes = safeRequire("./routes/verification.routes.js");
-const walletRoutes = safeRequire("./routes/wallet.routes.js");
-const positionsRoutes = safeRequire("./routes/positions.routes.js");
-const tradeRoutes = safeRequire("./routes/trade.routes.js");
-const accountRoutes = safeRequire("./routes/account.routes.js");
-const passwordRoutes = safeRequire("./routes/password.routes.js");
-const withdrawRoutes = safeRequire("./routes/withdraw.routes.js");
+const authRoutes =
+  safeRequire("./routes/auth.routes.js");
+
+const userRoutes =
+  safeRequire("./routes/user.routes.js");
+
+const verificationRoutes =
+  safeRequire("./routes/verification.routes.js");
+
+const walletRoutes =
+  safeRequire("./routes/wallet.routes.js");
+
+const positionsRoutes =
+  safeRequire("./routes/positions.routes.js");
+
+const tradeRoutes =
+  safeRequire("./routes/trade.routes.js");
+
+const accountRoutes =
+  safeRequire("./routes/account.routes.js");
+
+const passwordRoutes =
+  safeRequire("./routes/password.routes.js");
+
+const withdrawRoutes =
+  safeRequire("./routes/withdraw.routes.js");
 
 /* ======================================================
-   UTILS
+   OPTIONAL UTILS
 ====================================================== */
 
-const sendEmail = safeRequire("./utils/sendEmail.js");
+const sendEmail =
+  safeRequire("./utils/sendEmail.js");
 
 const PolygonSocket =
   safeRequire("./sockets/polygonSocket.js");
@@ -111,8 +136,11 @@ const PriceHandler =
 const marketRoutesFactory =
   safeRequire("./routes/market.routes.js");
 
+const riskJob =
+  safeRequire("./jobs/risk.job.js");
+
 const startRiskWatcher =
-  safeRequire("./jobs/risk.job.js")?.startRiskWatcher;
+  riskJob?.startRiskWatcher || null;
 
 const connectDBFn =
   typeof connectDB === "function"
@@ -175,7 +203,7 @@ app.use(
 );
 
 /* ======================================================
-   MONGO SANITIZE
+   SANITIZE
 ====================================================== */
 
 app.use((req, res, next) => {
@@ -294,6 +322,72 @@ app.use(
 );
 
 /* ======================================================
+   ROUTE LOADERS
+====================================================== */
+
+if (authRoutes) {
+  app.use("/api/auth", authRoutes);
+}
+
+if (userRoutes) {
+  app.use("/api/users", userRoutes);
+}
+
+if (verificationRoutes) {
+  app.use("/api/verification", verificationRoutes);
+}
+
+if (walletRoutes) {
+  app.use("/api/wallet", walletRoutes);
+}
+
+if (positionsRoutes) {
+  app.use("/api/positions", positionsRoutes);
+}
+
+if (tradeRoutes) {
+  app.use("/api/trade", tradeRoutes);
+}
+
+if (accountRoutes) {
+  app.use("/api/account", accountRoutes);
+}
+
+if (passwordRoutes) {
+  app.use("/api/password", passwordRoutes);
+}
+
+if (withdrawRoutes) {
+  app.use("/api/withdraw", withdrawRoutes);
+}
+
+/* ======================================================
+   MARKET ROUTES
+====================================================== */
+
+if (
+  typeof marketRoutesFactory ===
+  "function"
+) {
+  try {
+    const marketRoutes =
+      marketRoutesFactory(io);
+
+    if (marketRoutes) {
+      app.use(
+        "/api/market",
+        marketRoutes
+      );
+    }
+  } catch (err) {
+    console.error(
+      "❌ market routes error:",
+      err
+    );
+  }
+}
+
+/* ======================================================
    MULTER
 ====================================================== */
 
@@ -304,8 +398,9 @@ const documentStorage = multer.diskStorage({
 
   filename: (_req, file, cb) => {
     const unique =
-      `${Date.now()}-` +
-      `${Math.round(Math.random() * 1e9)}`;
+      `${Date.now()}-${Math.round(
+        Math.random() * 1e9
+      )}`;
 
     cb(
       null,
@@ -326,7 +421,7 @@ const uploadDocument = multer({
 });
 
 /* ======================================================
-   DB CONNECT
+   DB
 ====================================================== */
 
 Promise.resolve(
@@ -352,7 +447,7 @@ mongoose.connection.on(
       }
     } catch (err) {
       console.error(
-        "❌ Error realtime:",
+        "❌ realtime error:",
         err
       );
     }
@@ -392,7 +487,7 @@ mongoose.connection.on(
         }
 
         console.log(
-          `🛡️ Risk watcher iniciado`
+          "🛡️ Risk watcher iniciado"
         );
       }
     } catch (e) {
