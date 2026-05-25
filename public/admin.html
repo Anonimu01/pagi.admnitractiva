@@ -387,40 +387,68 @@ function toggleSidebar() {
   sidebar.classList.toggle("active");
   backdrop.classList.toggle("active");
 }
+
 function closeSidebar() {
   document.getElementById("sidebar").classList.remove("active");
   document.getElementById("backdrop").classList.remove("active");
 }
+
 window.addEventListener("resize", () => {
   if (window.innerWidth > 980) closeSidebar();
 });
 
 function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"]'/g, function(m) {
-    return ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[m];
+  return String(s ?? "").replace(/[&<>"']/g, function (m) {
+    return ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    })[m];
   });
 }
+
 function formatDate(value) {
   if (!value) return "—";
   const d = new Date(value);
   return isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
+
 function formatMoney(value) {
   const n = Number(value ?? 0);
   return n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 0 });
 }
+
 function statusClass(status) {
   return String(status || "default").toLowerCase().replace(/\s+/g, "_");
 }
-function getUserId(u) { return u?._id || u?.id || ""; }
-function getUserEmail(u) { return u?.email || u?.emailAddress || u?.correo || u?.Correo || "sin-email"; }
-function getUserName(u) { return u?.nombre || u?.name || u?.fullName || u?.firstName || u?.Nombre || u?.nombreCompleto || ""; }
-function getUserPhone(u) { return u?.telefono || u?.phone || u?.mobile || u?.Telefono || ""; }
-function getUserAddress(u) { return u?.direccion || u?.address || u?.Direccion || ""; }
+
+function getUserId(u) {
+  return u?._id || u?.id || "";
+}
+
+function getUserEmail(u) {
+  return u?.email || u?.emailAddress || u?.correo || u?.Correo || "sin-email";
+}
+
+function getUserName(u) {
+  return u?.nombre || u?.name || u?.fullName || u?.firstName || u?.Nombre || u?.nombreCompleto || "";
+}
+
+function getUserPhone(u) {
+  return u?.telefono || u?.phone || u?.mobile || u?.Telefono || "";
+}
+
+function getUserAddress(u) {
+  return u?.direccion || u?.address || u?.Direccion || "";
+}
+
 function extractArray(resp) {
   if (!resp) return [];
   if (Array.isArray(resp)) return resp;
   if (Array.isArray(resp.data)) return resp.data;
+  if (Array.isArray(resp.items)) return resp.items;
   if (Array.isArray(resp.withdraws)) return resp.withdraws;
   if (Array.isArray(resp.withdrawals)) return resp.withdrawals;
   if (Array.isArray(resp.documents)) return resp.documents;
@@ -428,51 +456,117 @@ function extractArray(resp) {
   if (Array.isArray(resp.result)) return resp.result;
   return [];
 }
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== "") return value;
   }
   return undefined;
 }
+
 function normalizeStatusLabel(value) {
   const s = String(value || "pending").trim().toLowerCase();
   if (["pendiente", "pending"].includes(s)) return "pending";
-  if (["aprobado", "approved"].includes(s)) return "approved";
+  if (["aprobado", "approved", "approved "].includes(s)) return "approved";
   if (["rechazado", "rejected"].includes(s)) return "rejected";
   if (["counter_offer", "counter offer", "contraoferta"].includes(s)) return "counter_offer";
   return s.replace(/\s+/g, "_") || "pending";
 }
+
 function getOwnerUserId(record = {}) {
-  return String(firstDefined(record.userId, record.user, record.usuario, record.ownerId, record.clientId, record.client, record.uid, ""));
+  return String(firstDefined(
+    record.userId,
+    record.userID,
+    record.user,
+    record.usuario,
+    record.ownerId,
+    record.clientId,
+    record.client,
+    record.uid,
+    ""
+  ));
 }
+
 function normalizeWithdrawItem(w = {}) {
-  const status = normalizeStatusLabel(firstDefined(w.status, w.Estado, w.estado, w.Status, "pending"));
-  const amount = Number(firstDefined(w.amount, w.Amount, w.cantidad, w.Cantidad, 0)) || 0;
+  const status = normalizeStatusLabel(firstDefined(
+    w.status,
+    w.Estado,
+    w.estado,
+    w.Status,
+    "pending"
+  ));
+
+  const amount = Number(firstDefined(
+    w.amount,
+    w.Amount,
+    w.cantidad,
+    w.Cantidad,
+    0
+  )) || 0;
+
   return {
     ...w,
     status,
     amount,
     method: String(firstDefined(w.method, w.metodo, w.Metodo, w.paymentMethod, "N/A")),
-    walletAddress: String(firstDefined(w.walletAddress, w.wallet, w.direccionWallet, w.proofUrl, "—")),
+    walletAddress: String(firstDefined(w.walletAddress, w.wallet, w.direccionWallet, w.proofUrl, "")),
     bankName: String(firstDefined(w.bankName, w.banco, "—")),
     accountNumber: String(firstDefined(w.accountNumber, w.account, w.cuenta, w.Cuenta, "—")),
     note: String(firstDefined(w.note, w.Nota, w.message, "")),
     adminNote: String(firstDefined(w.adminNote, w.adminnote, w.admin_note, "")),
     processedBy: String(firstDefined(w.processedBy, w.procesadoPor, "")),
-    processedAt: firstDefined(w.processedAt, w.procesadoAt, null),
+    processedAt: firstDefined(w.processedAt, w.procesadoAt, w.actualizadoAt, w.updatedAt, null),
     createdAt: firstDefined(w.createdAt, w.created_at, null),
     messages: Array.isArray(w.messages) ? w.messages : [],
     offerAmount: Number(firstDefined(w.offerAmount, w.counterOffer, w.oferta, 0)) || 0,
-    proofUrl: String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, ""))
+    proofUrl: String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, "")),
+    account: String(firstDefined(w.account, w.Cuenta, w.cuenta, "")),
+    Cuenta: String(firstDefined(w.Cuenta, w.account, w.cuenta, "")),
+    Estado: String(firstDefined(w.Estado, w.status, w.estado, "pending"))
   };
 }
+
 function normalizeDocumentItem(doc = {}) {
-  const status = normalizeStatusLabel(firstDefined(doc.status, doc.Estado, doc.estado, doc.Status, "pending"));
-  const type = String(firstDefined(doc.type, doc.Tipo, doc.tipo, doc.documentType, doc.DocumentType, "documento"));
-  const fileUrl = String(firstDefined(doc.fileUrl, doc.documentUrl, doc.url, doc.path, doc.archivo, doc.ruta, doc.proofUrl, ""));
-  const fileName = String(firstDefined(doc.originalName, doc.filename, doc.nombre, doc.fileName, doc.name, "archivo"));
+  const status = normalizeStatusLabel(firstDefined(
+    doc.status,
+    doc.Estado,
+    doc.estado,
+    doc.Status,
+    "pending"
+  ));
+
+  const type = String(firstDefined(
+    doc.type,
+    doc.Tipo,
+    doc.tipo,
+    doc.documentType,
+    doc.DocumentType,
+    "documento"
+  ));
+
+  const fileUrl = String(firstDefined(
+    doc.fileUrl,
+    doc.documentUrl,
+    doc.url,
+    doc.path,
+    doc.archivo,
+    doc.ruta,
+    doc.proofUrl,
+    ""
+  ));
+
+  const fileName = String(firstDefined(
+    doc.originalName,
+    doc.filename,
+    doc.nombre,
+    doc.fileName,
+    doc.name,
+    "archivo"
+  ));
+
   const mimeType = String(firstDefined(doc.mimeType, doc.mime, "—"));
   const size = Number(firstDefined(doc.size, doc.fileSize, doc.tamaño, 0)) || 0;
+
   return {
     ...doc,
     status,
@@ -483,39 +577,56 @@ function normalizeDocumentItem(doc = {}) {
     size,
     createdAt: firstDefined(doc.createdAt, doc.created_at, null),
     updatedAt: firstDefined(doc.updatedAt, doc.actualizadoAt, doc.updated_at, null),
-    adminNote: String(firstDefined(doc.adminNote, doc.adminnote, doc.notaAdmin, ""))
+    adminNote: String(firstDefined(doc.adminNote, doc.adminnote, doc.notaAdmin, "")),
+    Tipo: String(firstDefined(doc.Tipo, doc.type, type)),
+    Estado: String(firstDefined(doc.Estado, doc.status, status)),
+    documentUrl: String(firstDefined(doc.documentUrl, fileUrl)),
+    actualizadoAt: firstDefined(doc.actualizadoAt, doc.updatedAt, null)
   };
 }
+
 function setTab(tabName) {
   document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabName));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === tabName));
 }
+
 async function apiFetch(url, options = {}) {
   const opt = { ...options, headers: authHeaders(options.headers || {}) };
+
   if (options.body instanceof FormData) {
     delete opt.headers["Content-Type"];
   } else {
     opt.headers["Content-Type"] = opt.headers["Content-Type"] || "application/json";
   }
+
   const res = await fetch(url, opt);
+
   if (res.status === 401) {
     logout();
     return null;
   }
+
   if (res.status === 204) return {};
+
   const ct = res.headers.get("content-type") || "";
   let data = null;
+
   try {
     data = ct.includes("application/json") ? await res.json() : await res.text();
   } catch {
     data = null;
   }
+
   if (!res.ok) {
     throw new Error(typeof data === "string" ? data : (data?.msg || data?.message || res.statusText || "Error"));
   }
+
   return data;
 }
-function toast(message) { alert(message); }
+
+function toast(message) {
+  alert(message);
+}
 
 function connectSocket() {
   try {
@@ -523,9 +634,13 @@ function connectSocket() {
 
     socket.on("connect", () => {
       console.log("socket connected", socket.id);
-      socket.emit("join_admin_room");
+
+      socket.emit("join_admin");
+      socket.emit("join_admin_room"); // compatibilidad si tu cliente viejo usaba este nombre
+
       socket.emit("request_withdraws", { status: "all" });
       socket.emit("request_documents", { status: "all" });
+
       if (currentUser) {
         const userId = getUserId(currentUser);
         socket.emit("request_withdraws", { userId, status: "all" });
@@ -537,8 +652,10 @@ function connectSocket() {
       if (currentUser) loadWithdraws(getUserId(currentUser), true);
       loadAllWithdraws(false);
     };
+
     const refreshDocumentsForCurrent = () => {
       if (currentUser) loadDocuments(getUserId(currentUser), true);
+      loadAllDocuments(false);
     };
 
     socket.on("withdraw:new", refreshWithdrawsForCurrent);
@@ -566,6 +683,8 @@ function connectSocket() {
     socket.on("document:uploaded", refreshDocumentsForCurrent);
     socket.on("document:approved", refreshDocumentsForCurrent);
     socket.on("document:rejected", refreshDocumentsForCurrent);
+    socket.on("document:update", refreshDocumentsForCurrent);
+
   } catch (e) {
     console.warn("socket init failed:", e);
   }
@@ -574,6 +693,7 @@ function connectSocket() {
 async function loadUsers() {
   const list = document.getElementById("usersList");
   list.innerHTML = `<div class="loader">Cargando...</div>`;
+
   try {
     const resp = await apiFetch(API + "/admin/users");
     allUsers = extractArray(resp);
@@ -582,17 +702,21 @@ async function loadUsers() {
     list.innerHTML = `<div class="error">Error cargando usuarios</div>`;
   }
 }
+
 function renderUsers(users) {
   const list = document.getElementById("usersList");
   list.innerHTML = "";
+
   if (!users.length) {
     list.innerHTML = `<div class="center">No hay usuarios</div>`;
     return;
   }
+
   users.forEach(u => {
     const email = getUserEmail(u);
     const name = getUserName(u);
     const bal = typeof u.balance !== "undefined" ? u.balance : 0;
+
     const item = document.createElement("div");
     item.className = "user-item";
     item.innerHTML = `
@@ -603,23 +727,34 @@ function renderUsers(users) {
         <span>x${escapeHtml(String(typeof u.leverage !== "undefined" ? u.leverage : 1))}</span>
       </div>
     `;
+
     item.onclick = () => {
       openUser(u);
       if (window.innerWidth <= 980) closeSidebar();
     };
+
     list.appendChild(item);
   });
 }
+
 function filterUsers(text) {
   const t = String(text || "").toLowerCase().trim();
   if (!t) return renderUsers(allUsers);
+
   const filtered = allUsers.filter(u => {
     const values = [
-      getUserName(u), getUserEmail(u), getUserPhone(u), getUserAddress(u),
-      String(u.balance ?? ""), String(u.leverage ?? ""), String(u.role ?? "")
+      getUserName(u),
+      getUserEmail(u),
+      getUserPhone(u),
+      getUserAddress(u),
+      String(u.balance ?? ""),
+      String(u.leverage ?? ""),
+      String(u.role ?? "")
     ].join(" ").toLowerCase();
+
     return values.includes(t);
   });
+
   renderUsers(filtered);
 }
 
@@ -764,7 +899,7 @@ function openUser(u) {
   setTimeout(loadChart, 300);
 
   if (socket) {
-    socket.emit("join_admin_room");
+    socket.emit("join_admin");
     socket.emit("request_withdraws", { userId, status: "all" });
     socket.emit("request_documents", { userId, status: "all" });
   }
@@ -773,10 +908,13 @@ function openUser(u) {
 function loadChart() {
   const symbolEl = document.getElementById("symbolInput");
   if (!symbolEl) return;
+
   const symbol = symbolEl.value || "BINANCE:BTCUSDT";
+
   try {
     if (tvWidget && typeof tvWidget.remove === "function") tvWidget.remove();
   } catch {}
+
   try {
     tvWidget = new TradingView.widget({
       container_id: "tv_chart",
@@ -801,11 +939,13 @@ function loadChart() {
 async function updateBalance() {
   if (!currentUser) return;
   const balance = document.getElementById("balance").value;
+
   try {
     await apiFetch(API + "/admin/update-balance", {
       method: "POST",
       body: JSON.stringify({ userId: getUserId(currentUser), balance })
     });
+
     await loadUsers();
     const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
     openUser(refreshed);
@@ -818,16 +958,20 @@ async function updateBalance() {
 
 async function updateLeverage() {
   if (!currentUser) return;
+
   const leverage = Number(document.getElementById("leverage").value);
+
   if (Number.isNaN(leverage) || leverage < 50 || leverage > 100000) {
     alert("El apalancamiento debe estar entre 50 y 100000.");
     return;
   }
+
   try {
     await apiFetch(API + "/admin/update-leverage", {
       method: "POST",
       body: JSON.stringify({ userId: getUserId(currentUser), leverage })
     });
+
     await loadUsers();
     const refreshed = allUsers.find(u => String(getUserId(u)) === String(getUserId(currentUser))) || currentUser;
     openUser(refreshed);
@@ -841,23 +985,28 @@ async function updateLeverage() {
 function renderWithdrawList(list) {
   const box = document.getElementById("withdraws");
   if (!box) return;
+
   box.innerHTML = "";
+
   if (!list || !list.length) {
     box.innerHTML = `<div class="small">Sin solicitudes</div>`;
     return;
   }
+
   list.forEach((raw) => {
     const w = normalizeWithdrawItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
+
     const badge = escapeHtml(String(w.status || "pending"));
     const method = escapeHtml(w.method || "N/A");
     const amount = escapeHtml(formatMoney(w.amount || 0));
     const title = `#${escapeHtml(String(w._id || ""))}`;
-    const account = escapeHtml(w.accountNumber || "—");
+    const account = escapeHtml(w.accountNumber || w.account || w.Cuenta || "—");
     const bank = escapeHtml(w.bankName || "—");
     const wallet = escapeHtml(w.walletAddress || "—");
+
     div.innerHTML = `
       <div class="item-head">
         <div>
@@ -868,6 +1017,7 @@ function renderWithdrawList(list) {
       </div>
       <div class="small">Wallet: ${wallet}<br/>Banco: ${bank}<br/>Cuenta: ${account}</div>
     `;
+
     div.onclick = () => openWithdrawDetail(w);
     box.appendChild(div);
   });
@@ -875,19 +1025,23 @@ function renderWithdrawList(list) {
 
 async function loadWithdraws(userId, render = true) {
   if (!userId) return [];
+
   const endpoints = [
     API + "/admin/withdraws/" + encodeURIComponent(userId) + "?status=all",
-    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=all",
     API + "/admin/withdrawals/" + encodeURIComponent(userId) + "?status=all",
+    API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=all",
     API + "/admin/withdrawals?userId=" + encodeURIComponent(userId) + "&status=all",
     API + "/admin/withdraws?userId=" + encodeURIComponent(userId) + "&status=pending"
   ];
+
   let lastList = [];
+
   for (const url of endpoints) {
     try {
       const data = await apiFetch(url);
       const list = extractArray(data).map(normalizeWithdrawItem);
       lastList = list;
+
       if (list.length || Array.isArray(data)) {
         allWithdraws = list || [];
         if (render) renderWithdrawList(allWithdraws);
@@ -895,6 +1049,16 @@ async function loadWithdraws(userId, render = true) {
       }
     } catch {}
   }
+
+  try {
+    const data = await apiFetch(API + "/admin/withdraws?status=all");
+    const list = extractArray(data).map(normalizeWithdrawItem);
+    lastList = list;
+    allWithdraws = list.filter(w => String(getOwnerUserId(w)) === String(userId));
+    if (render) renderWithdrawList(allWithdraws);
+    return allWithdraws;
+  } catch {}
+
   allWithdraws = lastList || [];
   if (render) renderWithdrawList(allWithdraws);
   return allWithdraws;
@@ -906,11 +1070,13 @@ async function loadAllWithdraws(render = true) {
       API + "/admin/withdraws?status=all",
       API + "/admin/withdrawals?status=all"
     ];
+
     for (const url of endpoints) {
       try {
         const data = await apiFetch(url);
         const list = extractArray(data).map(normalizeWithdrawItem);
         allWithdraws = list || [];
+
         if (render) {
           if (currentUser) {
             const uid = String(getUserId(currentUser));
@@ -919,9 +1085,11 @@ async function loadAllWithdraws(render = true) {
             renderWithdrawList(allWithdraws);
           }
         }
+
         return allWithdraws;
       } catch {}
     }
+
     return [];
   } catch {
     return [];
@@ -931,9 +1099,11 @@ async function loadAllWithdraws(render = true) {
 function openWithdrawDetail(withdraw) {
   currentWithdraw = normalizeWithdrawItem(withdraw || {});
   if (!currentWithdraw) return;
+
   const w = currentWithdraw;
   const box = document.getElementById("withdrawDetail");
   if (!box) return;
+
   const msgs = Array.isArray(w.messages) ? w.messages : [];
   const messagesHtml = msgs.length
     ? msgs.map(m => `
@@ -943,7 +1113,9 @@ function openWithdrawDetail(withdraw) {
         </div>
       `).join("")
     : `<div class="small">No hay mensajes aún</div>`;
+
   const fileUrl = String(firstDefined(w.proofUrl, w.fileUrl, w.documentUrl, w.url, w.path, ""));
+
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
@@ -955,7 +1127,7 @@ function openWithdrawDetail(withdraw) {
             Método: ${escapeHtml(w.method || "—")}<br/>
             Wallet: ${escapeHtml(w.walletAddress || "—")}<br/>
             Banco: ${escapeHtml(w.bankName || "—")}<br/>
-            Cuenta: ${escapeHtml(w.accountNumber || "—")}
+            Cuenta: ${escapeHtml(w.accountNumber || w.account || w.Cuenta || "—")}
           </div>
         </div>
         <span class="badge ${statusClass(w.status)}">${escapeHtml(w.status || "pending")}</span>
@@ -1008,12 +1180,15 @@ function openWithdrawDetail(withdraw) {
 async function sendWithdrawMessage(id) {
   const message = document.getElementById("withdrawMessage")?.value || "";
   if (!message.trim()) return alert("Escribe un mensaje");
+
   try {
     await apiFetch(API + "/admin/withdraw/message", {
       method: "POST",
       body: JSON.stringify({ id, message })
     });
+
     if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+
     const refreshed = allWithdraws.find(w => String(w._id) === String(id));
     if (refreshed) openWithdrawDetail(refreshed);
     toast("Mensaje enviado");
@@ -1026,13 +1201,17 @@ async function sendWithdrawMessage(id) {
 async function sendCounterOffer(id) {
   const offerAmount = Number(document.getElementById("counterAmount")?.value || 0);
   const adminNote = document.getElementById("counterNote")?.value || "";
+
   if (!Number.isFinite(offerAmount) || offerAmount < 0) return alert("Monto inválido");
+
   try {
     await apiFetch(API + "/admin/withdraw/counter", {
       method: "POST",
       body: JSON.stringify({ id, offerAmount, adminNote })
     });
+
     if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+
     const refreshed = allWithdraws.find(w => String(w._id) === String(id));
     if (refreshed) openWithdrawDetail(refreshed);
     toast("Contraoferta enviada");
@@ -1048,13 +1227,18 @@ async function acceptOfferAsAdmin(id) {
       API + "/admin/withdraw/accept-offer",
       API + "/withdraw/accept-offer"
     ];
+
     let ok = false;
     for (const url of endpoints) {
       try {
         const result = await apiFetch(url, { method: "POST", body: JSON.stringify({ id }) });
-        if (result !== null) { ok = true; break; }
+        if (result !== null) {
+          ok = true;
+          break;
+        }
       } catch {}
     }
+
     if (ok) {
       if (currentUser) await loadWithdraws(getUserId(currentUser), true);
       const refreshed = allWithdraws.find(w => String(w._id) === String(id));
@@ -1070,9 +1254,11 @@ async function acceptOfferAsAdmin(id) {
 async function approveWithdraw(id) {
   if (!id) return;
   const adminNote = prompt("Nota de aprobación (opcional):", "") || "";
+
   try {
     const endpoints = [API + "/admin/withdraw/approve", API + "/admin/withdrawals/approve"];
     let ok = false;
+
     for (const url of endpoints) {
       try {
         await apiFetch(url, { method: "POST", body: JSON.stringify({ id, adminNote }) });
@@ -1080,6 +1266,7 @@ async function approveWithdraw(id) {
         break;
       } catch {}
     }
+
     if (ok) {
       if (currentUser) await loadWithdraws(getUserId(currentUser), true);
       const refreshed = allWithdraws.find(w => String(w._id) === String(id));
@@ -1095,9 +1282,11 @@ async function approveWithdraw(id) {
 async function rejectWithdraw(id) {
   if (!id) return;
   const adminNote = prompt("Motivo del rechazo (opcional):", "") || "";
+
   try {
     const endpoints = [API + "/admin/withdraw/reject", API + "/admin/withdrawals/reject"];
     let ok = false;
+
     for (const url of endpoints) {
       try {
         await apiFetch(url, { method: "POST", body: JSON.stringify({ id, adminNote }) });
@@ -1105,6 +1294,7 @@ async function rejectWithdraw(id) {
         break;
       } catch {}
     }
+
     if (ok) {
       if (currentUser) await loadWithdraws(getUserId(currentUser), true);
       const refreshed = allWithdraws.find(w => String(w._id) === String(id));
@@ -1120,19 +1310,24 @@ async function rejectWithdraw(id) {
 function renderDocumentList(list) {
   const box = document.getElementById("documents");
   if (!box) return;
+
   box.innerHTML = "";
+
   if (!list || !list.length) {
     box.innerHTML = `<div class="small">Sin documentos</div>`;
     return;
   }
+
   list.forEach((raw) => {
     const doc = normalizeDocumentItem(raw || {});
     const div = document.createElement("div");
     div.className = "item";
     div.style.cursor = "pointer";
+
     const badge = escapeHtml(String(doc.status || "pending"));
-    const type = escapeHtml(doc.type || "N/A");
+    const type = escapeHtml(doc.type || doc.Tipo || "N/A");
     const title = `#${escapeHtml(String(doc._id || ""))}`;
+
     div.innerHTML = `
       <div class="item-head">
         <div>
@@ -1146,6 +1341,7 @@ function renderDocumentList(list) {
         Tamaño: ${escapeHtml(String(Math.round((doc.size || 0) / 1024)))} KB
       </div>
     `;
+
     div.onclick = () => openDocumentDetail(doc);
     box.appendChild(div);
   });
@@ -1153,17 +1349,21 @@ function renderDocumentList(list) {
 
 async function loadDocuments(userId, render = true) {
   if (!userId) return [];
+
   const endpoints = [
     API + "/admin/documents/" + encodeURIComponent(userId) + "?status=all",
     API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=all",
     API + "/admin/documents?userId=" + encodeURIComponent(userId) + "&status=pending"
   ];
+
   let lastList = [];
+
   for (const url of endpoints) {
     try {
       const data = await apiFetch(url);
       const list = extractArray(data).map(normalizeDocumentItem);
       lastList = list;
+
       if (list.length || Array.isArray(data)) {
         allDocuments = list || [];
         if (render) renderDocumentList(allDocuments);
@@ -1171,23 +1371,67 @@ async function loadDocuments(userId, render = true) {
       }
     } catch {}
   }
+
+  try {
+    const data = await apiFetch(API + "/admin/documents?status=all");
+    const list = extractArray(data).map(normalizeDocumentItem);
+    lastList = list;
+    allDocuments = list.filter(d => String(getOwnerUserId(d)) === String(userId));
+    if (render) renderDocumentList(allDocuments);
+    return allDocuments;
+  } catch {}
+
   allDocuments = lastList || [];
   if (render) renderDocumentList(allDocuments);
   return allDocuments;
 }
 
+async function loadAllDocuments(render = true) {
+  try {
+    const endpoints = [
+      API + "/admin/documents?status=all"
+    ];
+
+    for (const url of endpoints) {
+      try {
+        const data = await apiFetch(url);
+        const list = extractArray(data).map(normalizeDocumentItem);
+        allDocuments = list || [];
+
+        if (render) {
+          if (currentUser) {
+            const uid = String(getUserId(currentUser));
+            renderDocumentList(allDocuments.filter(d => String(getOwnerUserId(d)) === uid));
+          } else {
+            renderDocumentList(allDocuments);
+          }
+        }
+
+        return allDocuments;
+      } catch {}
+    }
+
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 function openDocumentDetail(doc) {
   currentDocument = normalizeDocumentItem(doc || {});
   if (!currentDocument) return;
+
   const d = currentDocument;
   const box = document.getElementById("documentDetail");
   if (!box) return;
+
   const fileUrl = String(firstDefined(d.fileUrl, d.documentUrl, d.url, d.path, d.archivo, d.ruta, d.proofUrl, ""));
+
   box.innerHTML = `
     <div class="item">
       <div class="item-head">
         <div>
-          <div class="item-title">${escapeHtml(d.type || "documento")}</div>
+          <div class="item-title">${escapeHtml(d.type || d.Tipo || "documento")}</div>
           <div class="item-sub">
             ID: ${escapeHtml(d._id || "")}<br/>
             Usuario: ${escapeHtml(d.userId || "")}<br/>
@@ -1222,7 +1466,11 @@ function openDocumentDetail(doc) {
 async function approveDocument(id) {
   const note = document.getElementById("docAdminNote")?.value || "";
   try {
-    const endpoints = [API + "/admin/document/approve", API + "/admin/documents/approve"];
+    const endpoints = [
+      API + "/admin/document/approve",
+      API + "/admin/documents/approve"
+    ];
+
     let ok = false;
     for (const url of endpoints) {
       try {
@@ -1231,11 +1479,14 @@ async function approveDocument(id) {
         break;
       } catch {}
     }
+
     if (ok) {
       if (currentUser) await loadDocuments(getUserId(currentUser), true);
       const refreshed = allDocuments.find(d => String(d._id) === String(id));
       if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "approved" });
       toast("Documento aprobado");
+    } else {
+      toast("No existe la ruta de aprobar documento en el backend");
     }
   } catch (e) {
     console.error(e);
@@ -1246,7 +1497,11 @@ async function approveDocument(id) {
 async function rejectDocument(id) {
   const note = document.getElementById("docAdminNote")?.value || "";
   try {
-    const endpoints = [API + "/admin/document/reject", API + "/admin/documents/reject"];
+    const endpoints = [
+      API + "/admin/document/reject",
+      API + "/admin/documents/reject"
+    ];
+
     let ok = false;
     for (const url of endpoints) {
       try {
@@ -1255,11 +1510,14 @@ async function rejectDocument(id) {
         break;
       } catch {}
     }
+
     if (ok) {
       if (currentUser) await loadDocuments(getUserId(currentUser), true);
       const refreshed = allDocuments.find(d => String(d._id) === String(id));
       if (refreshed) openDocumentDetail({ ...refreshed, adminNote: note, status: "rejected" });
       toast("Documento rechazado");
+    } else {
+      toast("No existe la ruta de rechazar documento en el backend");
     }
   } catch (e) {
     console.error(e);
@@ -1269,8 +1527,10 @@ async function rejectDocument(id) {
 
 async function uploadDocumentForUser() {
   if (!currentUser) return alert("Selecciona un usuario primero");
+
   const file = document.getElementById("docFile")?.files?.[0];
   const type = document.getElementById("docType")?.value || "other";
+
   if (!file) return alert("Selecciona un archivo");
 
   const fd = new FormData();
@@ -1279,8 +1539,15 @@ async function uploadDocumentForUser() {
   fd.append("document", file);
 
   try {
-    const endpoints = [API + "/upload-document", API + "/admin/upload-document"];
+    const endpoints = [
+      API + "/admin/upload-document",
+      API + "/upload-document",
+      API + "/documents",
+      API + "/documents/upload"
+    ];
+
     let ok = false;
+
     for (const url of endpoints) {
       try {
         await apiFetch(url, { method: "POST", body: fd });
@@ -1288,9 +1555,12 @@ async function uploadDocumentForUser() {
         break;
       } catch {}
     }
+
     if (ok) {
       await loadDocuments(getUserId(currentUser), true);
       toast("Documento subido");
+    } else {
+      toast("No existe una ruta de subida de documentos compatible en tu backend");
     }
   } catch (e) {
     console.error(e);
