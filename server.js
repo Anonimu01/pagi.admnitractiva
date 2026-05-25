@@ -12,6 +12,9 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
+const authRoutes = require("./routes/authRoutes");
+const marketRoutesFactory = require("./routes/marketRoutes");
+
 
 /* ======================================================
    APP
