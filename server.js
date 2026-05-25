@@ -335,16 +335,45 @@ const uploadDocument = multer({
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
+
+  fileFilter: (
+    req,
+    file,
+    cb
+  ) => {
+    cb(null, true);
+  },
 });
 
 /* ======================================================
-   STATIC
+   STATIC FILES
 ====================================================== */
 
 app.use(
   "/uploads",
   express.static(uploadRoot)
 );
+
+/* ======================================================
+   PUBLIC FRONTEND
+====================================================== */
+
+const publicPath = path.join(
+  __dirname,
+  "public"
+);
+
+if (fs.existsSync(publicPath)) {
+  app.use(express.static(publicPath));
+
+  console.log(
+    "✅ Carpeta public montada"
+  );
+} else {
+  console.warn(
+    "⚠️ No existe carpeta public"
+  );
+}
 
 /* ======================================================
    DB
@@ -396,7 +425,8 @@ function isRouterLike(obj) {
     typeof obj === "function" ||
     (
       typeof obj === "object" &&
-      obj !== null
+      obj !== null &&
+      typeof obj.use === "function"
     )
   );
 }
@@ -460,7 +490,8 @@ safeUse(
 
 safeUse(
   "/api/withdraws",
-  withdrawRoutes);
+  withdrawRoutes
+);
 
 /* ======================================================
    MARKET ROUTER
@@ -523,14 +554,34 @@ io.on("connection", (socket) => {
 });
 
 /* ======================================================
-   HEALTH
+   HOME
 ====================================================== */
 
 app.get("/", (req, res) => {
-  res.json({
+  const indexPath = path.join(
+    publicPath,
+    "index.html"
+  );
+
+  if (fs.existsSync(indexPath)) {
+    return res.sendFile(indexPath);
+  }
+
+  return res.json({
     ok: true,
     message:
       "Servidor funcionando correctamente",
+  });
+});
+
+/* ======================================================
+   404
+====================================================== */
+
+app.use((req, res) => {
+  res.status(404).json({
+    ok: false,
+    message: "Ruta no encontrada",
   });
 });
 
@@ -560,6 +611,24 @@ process.on(
   }
 );
 
+/* ======================================================
+   START SERVER
+====================================================== */
+
+const PORT =
+  process.env.PORT || 10000;
+
+server.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `🚀 Server running on port ${PORT}`
+    );
+  }
+);
+
+module.exports = app;
 /* ======================================================
    START
 ====================================================== */
