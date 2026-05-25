@@ -12,8 +12,7 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
-const authRoutes = require("./routes/authRoutes");
-const marketRoutesFactory = require("./routes/marketRoutes");
+
 
 
 /* ======================================================
@@ -1524,6 +1523,7 @@ app.get("/api/admin/withdraws/:userId", ensureAdminAuth, async (req, res) => {
     });
   }
 });
+
 /* ======================================================
    WITHDRAWS  jevi
 ====================================================== */
@@ -1770,6 +1770,7 @@ app.get("/api/admin/documents/:userId", ensureAdminAuth, async (req, res) => {
     });
   }
 });
+
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
@@ -1974,11 +1975,10 @@ app.post("/api/documents", uploadDocument.single("document"), async (req, res) =
     return res.status(500).json({ ok: false, error: err.message });
   }
 });
+
 // ======================================================
 // MULTER CONFIG DOCUMENTS
 // ======================================================
-
-
 
 app.post("/api/documents/upload", async (req, res) => {
   try {
@@ -2090,15 +2090,15 @@ app.get("/api/markets/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUS
 app.get("/api/api/symbols", (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", label: "BTC/USDT", market: "Crypto" }]));
 app.get("/api/api/markets", (req, res) => res.json({ markets: ["Crypto", "Stocks", "Forex", "Indices"] }));
 
-try {
-  if (typeof marketRoutesFactory === "function") {
-    app.use("/api/market", marketRoutesFactory({ polygonSocket: null, priceHandler: new PriceHandler(io) }));
-  } else if (marketRoutesFactory) {
-    app.use("/api/market", marketRoutesFactory);
-  }
-} catch (e) {
-  console.warn("No se pudo montar /api/market:", e && e.message ? e.message : e);
-}
+// try {
+//   if (typeof marketRoutesFactory === "function") {
+//     app.use("/api/market", marketRoutesFactory({ polygonSocket: null, priceHandler: new PriceHandler(io) }));
+//   } else if (marketRoutesFactory) {
+//     app.use("/api/market", marketRoutesFactory);
+//   }
+// } catch (e) {
+//   console.warn("No se pudo montar /api/market:", e && e.message ? e.message : e);
+// }
 
 app.get("/api/quotes", async (req, res) => res.json([{ symbol: "BINANCE:BTCUSDT", price: getSimulatedPrice("BTCUSDT") }]));
 app.get("/api/latest", async (req, res) => {
@@ -2329,15 +2329,15 @@ app.get("/api/price", async (req, res) => {
   }
 });
 
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
-app.use("/api/verification", verificationRoutes);
-app.use("/api/wallet", walletRoutes);
-app.use("/api/positions", positionsRoutes);
-app.use("/api/trade", tradeRoutes);
-app.use("/api/account", accountRoutes);
-app.use("/api/password", passwordRoutes);
-app.use("/api/withdraws", withdrawRoutes);
+// app.use("/api/auth", authRoutes);
+// app.use("/api/users", userRoutes);
+// app.use("/api/verification", verificationRoutes);
+// app.use("/api/wallet", walletRoutes);
+// app.use("/api/positions", positionsRoutes);
+// app.use("/api/trade", tradeRoutes);
+// app.use("/api/account", accountRoutes);
+// app.use("/api/password", passwordRoutes);
+// app.use("/api/withdraws", withdrawRoutes);
 
 app.use("/api/api", (req, res) => {
   const newUrl = req.originalUrl.replace(/^\/api\/api/, "/api");
@@ -2502,6 +2502,5 @@ process.on("uncaughtException", (err) => {
   console.error("UNCAUGHT EXCEPTION:");
   console.error(err);
 });
-
 
 module.exports = app;
