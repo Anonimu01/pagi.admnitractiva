@@ -1,10 +1,13 @@
 require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const rateLimit = require("express-rate-limit");
 const { Server } = require("socket.io");
 const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 
@@ -12,58 +15,153 @@ const connectDB = require("./config/db");
 
 const app = express();
 const server = http.createServer(app);
-const fetchFn = typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
+
+const fetchFn =
+  typeof globalThis.fetch === "function"
+    ? globalThis.fetch.bind(globalThis)
+    : null;
 
 /* ======================================================
    CONFIG
 ====================================================== */
-const CORE_API_URL = String(process.env.CORE_API_URL || "").replace(/\/+$/, "");
-const CORE_USERS_ENDPOINTS = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers")
+
+const CORE_API_URL = String(
+  process.env.CORE_API_URL || ""
+).replace(/\/+$/, "");
+
+const CORE_USERS_ENDPOINTS = (
+  process.env.CORE_USERS_ENDPOINTS ||
+  "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers"
+)
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || process.env.ADMIN_USER || "";
-const ADMIN_PASS = process.env.ADMIN_PASS || process.env.ADMIN_PASSWORD || "";
-const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_JWT_SECRET || "admin-secret-dev";
-const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "";
+const ADMIN_EMAIL =
+  process.env.ADMIN_EMAIL ||
+  process.env.ADMIN_USER ||
+  "";
 
-const ZOHO_ENABLED = String(process.env.ZOHO_ENABLED || "true").toLowerCase() !== "false";
-const ZOHO_CLIENT_ID = process.env.ZOHO_CLIENT_ID || "";
-const ZOHO_CLIENT_SECRET = process.env.ZOHO_CLIENT_SECRET || "";
-const ZOHO_REFRESH_TOKEN = process.env.ZOHO_REFRESH_TOKEN || "";
-const ZOHO_ACCOUNTS_URL = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
-const ZOHO_API_BASE_URL = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
-const ZOHO_MODULE = process.env.ZOHO_MODULE || "Leads";
-const ZOHO_FALLBACK_MODULE = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-const ZOHO_LAST_NAME_FIELD = process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
-const ZOHO_EMAIL_FIELD = process.env.ZOHO_EMAIL_FIELD || "Email";
-const ZOHO_PHONE_FIELD = process.env.ZOHO_PHONE_FIELD || "Phone";
-const ZOHO_ADDRESS_FIELD = process.env.ZOHO_ADDRESS_FIELD || "Street";
-const ZOHO_FIRST_NAME_FIELD = process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
-const ZOHO_COMPANY_FIELD = process.env.ZOHO_COMPANY_FIELD || "Company";
-const ZOHO_SYNC_INTERVAL_MS = Number(process.env.ZOHO_SYNC_INTERVAL_MS || 300000);
+const ADMIN_PASS =
+  process.env.ADMIN_PASS ||
+  process.env.ADMIN_PASSWORD ||
+  "";
+
+const JWT_SECRET =
+  process.env.JWT_SECRET ||
+  process.env.ADMIN_JWT_SECRET ||
+  "admin-secret-dev";
+
+const ADMIN_API_KEY =
+  process.env.ADMIN_API_KEY || "";
+
+/* ======================================================
+   ZOHO CONFIG
+====================================================== */
+
+const ZOHO_ENABLED =
+  String(process.env.ZOHO_ENABLED || "true").toLowerCase() !==
+  "false";
+
+const ZOHO_CLIENT_ID =
+  process.env.ZOHO_CLIENT_ID || "";
+
+const ZOHO_CLIENT_SECRET =
+  process.env.ZOHO_CLIENT_SECRET || "";
+
+const ZOHO_REFRESH_TOKEN =
+  process.env.ZOHO_REFRESH_TOKEN || "";
+
+const ZOHO_ACCOUNTS_URL = (
+  process.env.ZOHO_ACCOUNTS_URL ||
+  "https://accounts.zoho.com"
+).replace(/\/+$/, "");
+
+const ZOHO_API_BASE_URL = (
+  process.env.ZOHO_API_BASE_URL ||
+  "https://www.zohoapis.com"
+).replace(/\/+$/, "");
+
+const ZOHO_MODULE =
+  process.env.ZOHO_MODULE || "Leads";
+
+const ZOHO_FALLBACK_MODULE =
+  process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+
+const ZOHO_LAST_NAME_FIELD =
+  process.env.ZOHO_LAST_NAME_FIELD || "Last_Name";
+
+const ZOHO_EMAIL_FIELD =
+  process.env.ZOHO_EMAIL_FIELD || "Email";
+
+const ZOHO_PHONE_FIELD =
+  process.env.ZOHO_PHONE_FIELD || "Phone";
+
+const ZOHO_ADDRESS_FIELD =
+  process.env.ZOHO_ADDRESS_FIELD || "Street";
+
+const ZOHO_FIRST_NAME_FIELD =
+  process.env.ZOHO_FIRST_NAME_FIELD || "First_Name";
+
+const ZOHO_COMPANY_FIELD =
+  process.env.ZOHO_COMPANY_FIELD || "Company";
+
+const ZOHO_SYNC_INTERVAL_MS = Number(
+  process.env.ZOHO_SYNC_INTERVAL_MS || 300000
+);
+
+/* ======================================================
+   WARNINGS
+====================================================== */
 
 if (!CORE_API_URL) {
-  console.warn("⚠️ CORE_API_URL no definido. Se usará modo local si hace falta.");
+  console.warn(
+    "⚠️ CORE_API_URL no definido. Se usará modo local si hace falta."
+  );
 }
-if (ZOHO_ENABLED && (!ZOHO_CLIENT_ID || !ZOHO_CLIENT_SECRET || !ZOHO_REFRESH_TOKEN)) {
-  console.warn("⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN.");
+
+if (
+  ZOHO_ENABLED &&
+  (
+    !ZOHO_CLIENT_ID ||
+    !ZOHO_CLIENT_SECRET ||
+    !ZOHO_REFRESH_TOKEN
+  )
+) {
+  console.warn(
+    "⚠️ Zoho habilitado pero faltan ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN."
+  );
 }
 
 /* ======================================================
    MULTER DOCUMENT UPLOAD
 ====================================================== */
-const uploadRoot = path.join(process.cwd(), "uploads");
-const documentsDir = path.join(uploadRoot, "documents");
+
+const uploadRoot = path.join(
+  process.cwd(),
+  "uploads"
+);
+
+const documentsDir = path.join(
+  uploadRoot,
+  "documents"
+);
+
+/* Crear carpetas automáticamente */
 
 if (!fs.existsSync(uploadRoot)) {
-  fs.mkdirSync(uploadRoot, { recursive: true });
+  fs.mkdirSync(uploadRoot, {
+    recursive: true,
+  });
 }
 
 if (!fs.existsSync(documentsDir)) {
-  fs.mkdirSync(documentsDir, { recursive: true });
+  fs.mkdirSync(documentsDir, {
+    recursive: true,
+  });
 }
+
+/* Storage */
 
 const documentStorage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -72,14 +170,21 @@ const documentStorage = multer.diskStorage({
 
   filename: (req, file, cb) => {
     const unique =
-      Date.now() + "-" + Math.round(Math.random() * 1e9);
+      Date.now() +
+      "-" +
+      Math.round(Math.random() * 1e9);
 
     cb(
       null,
-      unique + path.extname(file.originalname || "")
+      unique +
+        path.extname(
+          file.originalname || ""
+        )
     );
   },
 });
+
+/* Upload */
 
 const uploadDocument = multer({
   storage: documentStorage,
@@ -87,26 +192,37 @@ const uploadDocument = multer({
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
+
+  fileFilter: (req, file, cb) => {
+    cb(null, true);
+  },
 });
 
 /* ======================================================
    DB
 ====================================================== */
+
 Promise.resolve(connectDB()).catch((err) => {
-  console.error("Error conectando DB:", err?.message || err);
+  console.error(
+    "❌ Error conectando DB:",
+    err?.message || err
+  );
 });
 
 mongoose.connection.on("connected", () => {
   console.log("✅ Mongo conectado");
 });
+
 mongoose.connection.on("error", (err) => {
-  console.error("❌ Mongo connection error:", err);
+  console.error(
+    "❌ Mongo connection error:",
+    err
+  );
 });
+
 mongoose.connection.on("disconnected", () => {
   console.warn("⚠️ Mongo disconnected");
 });
-
-
 /* ======================================================
    MODELOS
 ====================================================== */
