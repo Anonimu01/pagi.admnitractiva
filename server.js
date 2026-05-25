@@ -1414,80 +1414,48 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
 ====================================================== */
 app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
   try {
-    const { userId, balance, leverage, note, currency } = req.body || {};
+    const { userId, balance } = req.body || {};
 
-    if (!userId || balance === undefined || balance === null || balance === "") {
+    if (!userId || balance === undefined || balance === null) {
       return res.status(400).json({
         ok: false,
-        error: "userId y balance son requeridos",
+        msg: "Datos incompletos",
       });
     }
 
-    const numericAmount = normalizeNumber(balance);
+    const amount = Number(balance);
 
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    if (!Number.isFinite(amount)) {
       return res.status(400).json({
         ok: false,
-        error: "balance inválido",
+        msg: "Balance inválido",
       });
     }
 
-    const remote = await proxyToCore(req, "/api/admin/deposit", {
-      method: "POST",
-      body: {
-        userId,
-        amount: numericAmount,
-        leverage: leverage !== undefined ? Number(leverage) : undefined,
-        note: note || "Update balance",
-        currency: currency || "USD",
-      },
-    });
+    const user = await User.findById(userId);
 
-    if (remote.ok) {
-      if (remote.headers) relaySetCookies(remote.headers, res);
-
-      const tx =
-        remote.data?.data?.transaction ||
-        remote.data?.transaction ||
-        null;
-
-      const account =
-        remote.data?.data?.account ||
-        remote.data?.account ||
-        null;
-
-      const wallet =
-        remote.data?.data?.wallet ||
-        remote.data?.wallet ||
-        null;
-
-      const balanceValue =
-        remote.data?.data?.balance ??
-        remote.data?.balance ??
-        account?.balance ??
-        null;
-
-      emitStateUpdates(userId, { account, wallet }, null, tx);
-
-      if (balanceValue !== null) {
-        io.emit(`balance:${userId}`, balanceValue);
-      }
-
-      return res.status(remote.status).json(remote.data);
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado",
+      });
     }
 
-    const local = await localDeposit({
-      userId,
-      amount: numericAmount,
-      leverage:
-        leverage !== undefined
-          ? Number(leverage)
-          : undefined,
-      note: note || "Update balance",
-      currency: currency || "USD",
-    });
+    const wallet = await getWalletDocForUser(user._id);
 
-    return res.status(local.status).json(local.data);
+    wallet.balance = amount;
+    wallet.balanceOwn = amount;
+    wallet.updatedAt = new Date();
+
+    await wallet.save();
+
+    io.emit(`balance:${userId}`, amount);
+
+    return res.json({
+      ok: true,
+      msg: "Saldo actualizado",
+      balance: amount,
+    });
 
   } catch (err) {
     console.error("/api/admin/update-balance error:", err);
@@ -1495,11 +1463,10 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
     return res.status(500).json({
       ok: false,
       msg: "Error actualizando saldo",
-      error: err?.message || String(err),
+      error: err.message,
     });
   }
 });
-
 
 /* ======================================================
    SYNC CORE
@@ -1596,6 +1563,32 @@ app.get("/api/admin/account", ensureAdminAuth, async (req, res) => {
   } catch (err) {
     console.error("GET admin account error:", err);
     return res.status(500).json({ ok: false, msg: "Error obteniendo cuenta" });
+  }
+});
+
+       app.get("/api/admin/withdrawals/:userId", ensureAdminAuth, async (req, res) => {
+  try {
+    const withdraws = await loadWithdraws({
+      userId: req.params.userId,
+      status: req.query.status || "all",
+      limit: 500,
+    });
+
+    return res.json({
+      ok: true,
+      count: withdraws.length,
+      withdraws,
+      withdrawals: withdraws,
+      data: withdraws,
+      items: withdraws,
+    });
+  } catch (err) {
+    console.error("/api/admin/withdrawals/:userId error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error obteniendo retiros",
+    });
   }
 });
 
