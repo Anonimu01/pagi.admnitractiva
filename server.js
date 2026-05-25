@@ -2438,6 +2438,12 @@ app.get("*", (req, res) => {
 /* =========================
    START / SHUTDOWN
    ========================= */
+/* =========================
+   START / SHUTDOWN
+========================= */
+
+const PORT = process.env.PORT || 3000;
+
 const serverInstance = server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on ${PORT}`);
   console.log("ENV STATUS:");
@@ -2446,10 +2452,15 @@ const serverInstance = server.listen(PORT, "0.0.0.0", () => {
   console.log("MONGO:", !!process.env.MONGO_URI);
   console.log("ADMIN_API_KEY:", !!process.env.ADMIN_API_KEY);
   console.log("POLYGON:", !!process.env.POLYGON_API_KEY);
-  if (!process.env.POLYGON_API_KEY) console.warn("⚠️ POLYGON_API_KEY no configurado — realtime limitado");
-  if (!process.env.RESEND_API_KEY) console.warn("⚠️ Resend no configurado — emails pueden usar SMTP o simulación");
-});
 
+  if (!process.env.POLYGON_API_KEY) {
+    console.warn("⚠️ POLYGON_API_KEY no configurado — realtime limitado");
+  }
+
+  if (!process.env.RESEND_API_KEY) {
+    console.warn("⚠️ Resend no configurado — emails pueden usar SMTP o simulación");
+  }
+});
 let shuttingDown = false;
 
 const safeClosePolygonSocket = async () => {
