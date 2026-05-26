@@ -1061,20 +1061,67 @@ async function getExistingZohoIdForUser(userDoc) {
 }
 
 function buildZohoPayload(userDoc) {
-  const fullName = String(userDoc.fullName || [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") || userDoc.email || "Cliente").trim();
-  const firstName = String(userDoc.firstName || "").trim();
-  const lastName = String(userDoc.lastName || fullName || userDoc.email || "Cliente").trim();
-  const address = String(userDoc.address || "").trim();
-  const phone = String(userDoc.phone || "").trim();
-  const email = String(userDoc.email || "").trim().toLowerCase();
+
+  const fullName = String(
+    userDoc.fullName ||
+    [userDoc.firstName, userDoc.lastName]
+      .filter(Boolean)
+      .join(" ") ||
+    userDoc.email ||
+    "Cliente"
+  ).trim();
+
+  const firstName = String(
+    userDoc.firstName || ""
+  ).trim();
+
+  const lastName = String(
+    userDoc.lastName ||
+    fullName ||
+    userDoc.email ||
+    "Cliente"
+  ).trim();
+
+  const address = String(
+    userDoc.address || ""
+  ).trim();
+
+  const phone = String(
+    userDoc.phone || ""
+  ).trim();
+
+  const email = String(
+    userDoc.email || ""
+  ).trim().toLowerCase();
+
   return {
-    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]: firstName || "Cliente",
-    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]: lastName || fullName || "Cliente",
-    [process.env.ZOHO_EMAIL_FIELD || "Email"]: email || undefined,
-    [process.env.ZOHO_PHONE_FIELD || "Phone"]: phone || undefined,
-    [process.env.ZOHO_ADDRESS_FIELD || "Street"]: address || undefined,
-    [process.env.ZOHO_COMPANY_FIELD || "Company"]: "Leones Broker",
-    Description: `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.`,
+
+    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]:
+      firstName || "Cliente",
+
+    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]:
+      lastName || fullName || "Cliente",
+
+    [process.env.ZOHO_EMAIL_FIELD || "Email"]:
+      email || undefined,
+
+    [process.env.ZOHO_PHONE_FIELD || "Phone"]:
+      phone || undefined,
+
+    [process.env.ZOHO_ADDRESS_FIELD || "Street"]:
+      address || undefined,
+
+    [process.env.ZOHO_COMPANY_FIELD || "Company"]:
+      "Leones Broker",
+
+    Lead_Source:
+      "Leones Broker",
+
+    Lead_Status:
+      "Nuevo",
+
+    Description:
+      `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.`,
   };
 }
 
@@ -1097,6 +1144,122 @@ async function createOrUpdateZohoRecord(userDoc) {
   const record = create.data?.data?.[0];
   const zohoId = record?.details?.id || record?.id || "";
   return { ok: true, action: "created", module: moduleToUse, zohoId, data: create.data };
+}
+
+   /* ======================================================
+   ZOHO CRM
+====================================================== */
+
+async function createZohoLead(data = {}) {
+  try {
+
+    if (
+      !process.env.ZOHO_CLIENT_ID ||
+      !process.env.ZOHO_CLIENT_SECRET ||
+      !process.env.ZOHO_REFRESH_TOKEN
+    ) {
+      console.warn("⚠️ Zoho CRM no configurado");
+      return null;
+    }
+
+    // =========================
+    // GET ACCESS TOKEN
+    // =========================
+
+    const tokenResponse = await fetch(
+      "https://accounts.zoho.com/oauth/v2/token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          refresh_token:
+            process.env.ZOHO_REFRESH_TOKEN,
+          client_id:
+            process.env.ZOHO_CLIENT_ID,
+          client_secret:
+            process.env.ZOHO_CLIENT_SECRET,
+          grant_type: "refresh_token",
+        }),
+      }
+    );
+
+    const tokenData = await tokenResponse.json();
+
+    const accessToken = tokenData.access_token;
+
+    if (!accessToken) {
+      console.error(
+        "❌ ZOHO TOKEN ERROR:",
+        tokenData
+      );
+      return null;
+    }
+
+    // =========================
+    // CREATE LEAD
+    // =========================
+
+    const payload = {
+      data: [
+        {
+          Last_Name:
+            data.fullName || "Cliente",
+
+          Phone:
+            data.phone || "",
+
+          Street:
+            data.address || "",
+
+          Lead_Status:
+            "Nuevo",
+
+          Description:
+            "Cliente registrado automáticamente desde la plataforma.",
+
+          Company:
+            "Leones Broker",
+        },
+      ],
+      trigger: [],
+    };
+
+    const response = await fetch(
+      "https://www.zohoapis.com/crm/v2/Leads",
+      {
+        method: "POST",
+        headers: {
+          Authorization:
+            `Zoho-oauthtoken ${accessToken}`,
+
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const result = await response.json();
+
+    console.log(
+      "✅ ZOHO LEAD CREATED:",
+      JSON.stringify(result, null, 2)
+    );
+
+    return result;
+
+  } catch (err) {
+
+    console.error(
+      "❌ createZohoLead error:",
+      err
+    );
+
+    return null;
+  }
 }
 
 async function syncUserToZohoAndMark(userDoc) {
@@ -2643,6 +2806,228 @@ const uploadDocument = multer({
     }
   },
 });
+
+/* ======================================================
+   REGISTER
+====================================================== */
+app.post(
+  ["/api/register", "/api/auth/register", "/api/signup"],
+  async (req, res) => {
+    try {
+      const {
+        name,
+        firstName,
+        lastName,
+        username,
+        email,
+        password,
+        phone,
+        country,
+      } = req.body || {};
+
+      const cleanEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+
+      if (!cleanEmail || !password) {
+        return res.status(400).json({
+          ok: false,
+          msg: "Email y password requeridos",
+        });
+      }
+
+      /* =========================
+         CHECK EXISTING USER
+      ========================= */
+
+      const existingUser = await User.findOne({
+        email: cleanEmail,
+      }).catch(() => null);
+
+      if (existingUser) {
+        return res.status(400).json({
+          ok: false,
+          msg: "El email ya está registrado",
+        });
+      }
+
+      /* =========================
+         HASH PASSWORD
+      ========================= */
+
+      const hashedPassword =
+        typeof bcrypt !== "undefined"
+          ? await bcrypt.hash(password, 10)
+          : password;
+
+      /* =========================
+         BUILD USER DATA
+      ========================= */
+
+      const finalName =
+        name ||
+        [firstName, lastName]
+          .filter(Boolean)
+          .join(" ")
+          .trim() ||
+        username ||
+        cleanEmail.split("@")[0];
+
+      /* =========================
+         CREATE USER
+      ========================= */
+
+      const user = await User.create({
+        name: finalName,
+        firstName: firstName || "",
+        lastName: lastName || "",
+        username:
+          username ||
+          cleanEmail.split("@")[0],
+
+        email: cleanEmail,
+
+        password: hashedPassword,
+
+        phone: phone || "",
+
+        country: country || "",
+
+        balance: 0,
+
+        leverage: 100,
+
+        zohoSynced: false,
+
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      /* =========================
+         CREATE WALLET
+      ========================= */
+
+      try {
+        await getWalletDocForUser(user._id);
+      } catch (walletErr) {
+        console.warn(
+          "wallet create warning:",
+          walletErr?.message || walletErr
+        );
+      }
+
+      /* =========================
+         CREATE TOKEN
+      ========================= */
+
+      let token = null;
+
+      try {
+        if (typeof signUserToken === "function") {
+          token = signUserToken({
+            id: user._id,
+            email: user.email,
+          });
+        } else if (JWT_SECRET) {
+          token = jwt.sign(
+            {
+              id: user._id,
+              email: user.email,
+            },
+            JWT_SECRET,
+            {
+              expiresIn: "7d",
+            }
+          );
+        }
+      } catch (tokenErr) {
+        console.warn(
+          "token warning:",
+          tokenErr?.message || tokenErr
+        );
+      }
+
+      /* =========================
+         ZOHO CRM SYNC
+      ========================= */
+
+      try {
+        if (
+          typeof syncUserToZohoAndMark === "function"
+        ) {
+          await syncUserToZohoAndMark(user);
+
+          console.log(
+            "✅ Usuario sincronizado con Zoho:",
+            cleanEmail
+          );
+        } else {
+          console.warn(
+            "⚠️ syncUserToZohoAndMark no existe"
+          );
+        }
+      } catch (zohoErr) {
+        console.error(
+          "❌ Error sincronizando con Zoho:",
+          zohoErr?.message || zohoErr
+        );
+      }
+
+      /* =========================
+         BUILD ACCOUNT
+      ========================= */
+
+      let payload = null;
+
+      try {
+        payload = await buildAccountForUser(user);
+      } catch (buildErr) {
+        console.warn(
+          "buildAccount warning:",
+          buildErr?.message || buildErr
+        );
+      }
+
+      /* =========================
+         SOCKET EVENT
+      ========================= */
+
+      io.emit("user:new", {
+        userId: String(user._id),
+        email: user.email,
+        name: user.name,
+      });
+
+      /* =========================
+         RESPONSE
+      ========================= */
+
+      return res.status(201).json({
+        ok: true,
+        msg: "Registro exitoso",
+
+        token,
+
+        user: payload?.account || user,
+
+        wallet: payload?.wallet || null,
+      });
+
+    } catch (err) {
+
+      console.error(
+        "register error:",
+        err
+      );
+
+      return res.status(500).json({
+        ok: false,
+        msg: "Error del servidor",
+        error: err?.message || String(err),
+      });
+    }
+  }
+);
 
 app.get("/api/admin/documents", ensureAdminAuth, async (req, res) => {
   try {
