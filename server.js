@@ -1832,83 +1832,66 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
-app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
+app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
-
-    if (!userId || leverage === undefined || leverage === null) {
-      return res.status(400).json({
-        ok: false,
-        msg: "Datos incompletos",
-      });
-    }
-
-    const numericLeverage = Number(leverage);
-
-    if (!Number.isFinite(numericLeverage) || numericLeverage <= 0) {
-      return res.status(400).json({
-        ok: false,
-        msg: "Leverage inválido",
-      });
+    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
+      return res.status(400).json({ msg: "Datos incompletos" });
     }
 
     const user = await User.findById(userId).catch(() => null);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    if (!user) {
-      return res.status(404).json({
-        ok: false,
-        msg: "Usuario no encontrado",
-      });
-    }
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
 
     const wallet = await getWalletDocForUser(user._id);
-
-    /* =========================
-       UPDATE LEVERAGE
-    ========================= */
-
-    wallet.leverage = numericLeverage;
+    wallet.leverageFactor = lev;
     wallet.updatedAt = new Date();
-
-    user.leverage = numericLeverage;
-    user.updatedAt = new Date();
-
     await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
     await user.save();
 
-    const payload = await buildAccountForUser(user);
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(userId, account, null, null);
 
-    io.emit("admin:user:update", {
-      userId: String(userId),
-      leverage: numericLeverage,
-      account: payload.account,
-      wallet: payload.wallet,
-    });
-
-    io.emit(`account:${userId}`, {
-      userId: String(userId),
-      account: payload.account,
-      wallet: payload.wallet,
-    });
-
-    return res.json({
-      ok: true,
-      msg: "Apalancamiento actualizado",
-      leverage: numericLeverage,
-      account: payload.account,
-      wallet: payload.wallet,
-    });
-
+    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
   } catch (err) {
     console.error("/api/admin/update-leverage error:", err);
-
-    return res.status(500).json({
-      ok: false,
-      msg: "Error actualizando leverage",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ msg: "Error actualizando leverage" });
   }
 });
+
+app.put("/api/admin/users/leverage/:id", ensureAdminAuth, async (req, res) => {
+  try {
+    const { leverage } = req.body || {};
+    const user = await User.findById(req.params.id).catch(() => null);
+    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
+
+    const lev = Number(leverage);
+    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
+
+    const wallet = await getWalletDocForUser(user._id);
+    wallet.leverageFactor = lev;
+    wallet.updatedAt = new Date();
+    await wallet.save();
+
+    user.leverage = lev;
+    user.updatedAt = new Date();
+    await user.save();
+
+    const account = await buildAccountForUser(user);
+    emitStateUpdates(String(user._id), account, null, null);
+
+    return res.json({ ok: true, msg: "Leverage actualizado (PUT)", leverage: lev, account: account.account, wallet: account.wallet });
+  } catch (err) {
+    console.error("PUT /admin/users/leverage/:id error:", err);
+    return res.status(500).json({ msg: "Error actualizando leverage" });
+  }
+});
+
     /* =========================
        UPDATE WALLET
     ========================= */
