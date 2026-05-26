@@ -1744,6 +1744,87 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 
     const wallet = await getWalletDocForUser(user._id);
 
+/* ======================================================
+   UPDATE LEVERAGE
+====================================================== */
+app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, leverage } = req.body || {};
+
+    if (!userId || leverage === undefined || leverage === null) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Datos incompletos",
+      });
+    }
+
+    const numericLeverage = Number(leverage);
+
+    if (!Number.isFinite(numericLeverage) || numericLeverage <= 0) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Leverage inválido",
+      });
+    }
+
+    const user = await User.findById(userId).catch(() => null);
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado",
+      });
+    }
+
+    const wallet = await getWalletDocForUser(user._id);
+
+    /* =========================
+       UPDATE LEVERAGE
+    ========================= */
+
+    wallet.leverage = numericLeverage;
+    wallet.updatedAt = new Date();
+
+    user.leverage = numericLeverage;
+    user.updatedAt = new Date();
+
+    await wallet.save();
+    await user.save();
+
+    const payload = await buildAccountForUser(user);
+
+    io.emit("admin:user:update", {
+      userId: String(userId),
+      leverage: numericLeverage,
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit(`account:${userId}`, {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    return res.json({
+      ok: true,
+      msg: "Apalancamiento actualizado",
+      leverage: numericLeverage,
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+  } catch (err) {
+    console.error("/api/admin/update-leverage error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error actualizando leverage",
+      error: err?.message || String(err),
+    });
+  }
+});
+
     /* =========================
        UPDATE WALLET
     ========================= */
