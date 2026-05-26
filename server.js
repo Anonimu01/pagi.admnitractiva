@@ -1710,7 +1710,7 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   }
 });
 
-       /* ======================================================
+      /* ======================================================
    UPDATE BALANCE COMPATIBILITY
 ====================================================== */
 app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
@@ -1744,10 +1744,96 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 
     const wallet = await getWalletDocForUser(user._id);
 
+    /* =========================
+       UPDATE WALLET
+    ========================= */
+
+    wallet.balance = amount;
+    wallet.balanceOwn = amount;
+    wallet.availableBalance = amount;
+    wallet.equity = amount;
+    wallet.freeMargin = amount;
+    wallet.marginUsed = 0;
+    wallet.updatedAt = new Date();
+
+    await wallet.save();
+
+    /* =========================
+       UPDATE USER
+    ========================= */
+
+    user.balance = amount;
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    /* =========================
+       BUILD UPDATED ACCOUNT
+    ========================= */
+
+    const payload = await buildAccountForUser(user);
+
+    /* =========================
+       REALTIME EMITS
+    ========================= */
+
+    io.emit(`balance:${userId}`, amount);
+
+    io.emit("account:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit(`account:${userId}`, {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit("admin:user:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+      balance: amount,
+    });
+
+    emitStateUpdates(
+      String(userId),
+      {
+        account: payload.account,
+        wallet: payload.wallet,
+      },
+      null,
+      null
+    );
+
+    return res.json({
+      ok: true,
+      msg: "Saldo actualizado",
+      balance: amount,
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+  } catch (err) {
+    console.error("/api/admin/update-balance error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error actualizando saldo",
+      error: err?.message || String(err),
+    });
+  }
+});
+
+
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
-     console.log("UPDATE LEVERAGE ROUTE LOADED");
+
+console.log("UPDATE LEVERAGE ROUTE LOADED");
+
 app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
@@ -1825,7 +1911,6 @@ app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
     });
   }
 });
-
     /* =========================
        UPDATE WALLET
     ========================= */
