@@ -1459,6 +1459,56 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   }
 });
 
+
+             app.post("/api/admin/withdraw/message", ensureAdminAuth, async (req, res) => {
+  try {
+    const { id, adminMessage } = req.body || {};
+
+    if (!id || !adminMessage) {
+      return res.status(400).json({
+        ok: false,
+        msg: "adminMessage requerido"
+      });
+    }
+
+    const withdraw = await Withdraw.findById(id);
+
+    if (!withdraw) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado"
+      });
+    }
+
+    if (!Array.isArray(withdraw.messages)) {
+      withdraw.messages = [];
+    }
+
+    withdraw.messages.push({
+      sender: "admin",
+      message: adminMessage,
+      createdAt: new Date()
+    });
+
+    await withdraw.save();
+
+    io.emit("admin:withdraw-update", withdraw);
+
+    return res.json({
+      ok: true,
+      withdraw
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error enviando mensaje"
+    });
+  }
+});
+
    /* ======================================================
    UPDATE BALANCE COMPATIBILITY
 ====================================================== */
