@@ -1510,136 +1510,172 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
 });
 
 /* ======================================================
-   UPDATE BALANCE
+   UPDATE BALANCE COMPATIBILITY
 ====================================================== */
-app.post(
-  ["/api/admin/update-balance", "/api/update-balance"],
-  ensureAdminAuth,
-  async (req, res) => {
-    try {
-      const {
-        userId,
-        balance,
-        leverage,
-        note,
-      } = req.body || {};
+app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, balance } = req.body || {};
 
-      if (!userId) {
-        return res.status(400).json({
-          ok: false,
-          msg: "userId requerido",
-        });
-      }
-
-      const numericBalance = Number(balance);
-
-      if (!Number.isFinite(numericBalance)) {
-        return res.status(400).json({
-          ok: false,
-          msg: "Balance inválido",
-        });
-      }
-
-      const user = await User.findById(userId).catch(() => null);
-
-      if (!user) {
-        return res.status(404).json({
-          ok: false,
-          msg: "Usuario no encontrado",
-        });
-      }
-
-      try {
-        const result = await depositByDelta(
-          req,
-          res,
-          userId,
-          numericBalance,
-          leverage,
-          note || "Update balance"
-        );
-
-        if (result?.headers) {
-          relaySetCookies(result.headers, res);
-        }
-
-        if (result && result.ok) {
-          return res
-            .status(result.status)
-            .json(result.data);
-        }
-
-        return res.status(result?.status || 500).json(
-          result?.data || {
-            ok: false,
-            msg: "Error actualizando saldo",
-          }
-        );
-
-      } catch (depositErr) {
-        console.error(
-          "depositByDelta error:",
-          depositErr
-        );
-
-        /* =========================
-           FALLBACK MANUAL UPDATE
-        ========================= */
-
-        const wallet = await getWalletDocForUser(
-          user._id
-        );
-
-        wallet.balance = numericBalance;
-        wallet.balanceOwn = numericBalance;
-        wallet.availableBalance = numericBalance;
-        wallet.equity = numericBalance;
-        wallet.freeMargin = numericBalance;
-        wallet.marginUsed = 0;
-        wallet.updatedAt = new Date();
-
-        await wallet.save();
-
-        user.balance = numericBalance;
-        user.updatedAt = new Date();
-
-        await user.save();
-
-        const payload =
-          await buildAccountForUser(user);
-
-        io.emit(`balance:${userId}`, numericBalance);
-
-        io.emit("account:update", {
-          userId: String(userId),
-          account: payload.account,
-          wallet: payload.wallet,
-        });
-
-        return res.json({
-          ok: true,
-          msg: "Saldo actualizado",
-          fallback: true,
-          balance: numericBalance,
-          account: payload.account,
-          wallet: payload.wallet,
-        });
-      }
-
-    } catch (err) {
-      console.error(
-        "/api/admin/update-balance error:",
-        err
-      );
-
-      return res.status(500).json({
+    if (!userId || balance === undefined || balance === null) {
+      return res.status(400).json({
         ok: false,
-        msg: "Error actualizando saldo",
-        error: err?.message || String(err),
+        msg: "Datos incompletos",
       });
     }
+
+    const amount = Number(balance);
+
+    if (!Number.isFinite(amount)) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Balance inválido",
+      });
+    }
+
+    const user = await User.findById(userId).catch(() => null);
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado",
+      });
+    }
+
+    const wallet = await getWalletDocForUser(user._id);
+
+    /* =========================
+       GET PREVIOUS BALANCE
+    ========================= */
+
+    const previousBalance = Number(
+      wallet.balanceOwn ??
+      wallet.balance ??
+      0
+    );
+
+    const delta = amount - previousBalance;
+
+    /* =========================
+       UPDATE WALLET
+    ========================= */
+
+    wallet.balance = amount;
+    wallet.balanceOwn = amount;
+    wallet.availableBalance = amount;
+    wallet.equity = amount;
+    wallet.freeMargin = amount;
+    wallet.marginUsed = 0;
+    wallet.updatedAt = new Date();
+
+    await wallet.save();
+
+    /* =========================
+       UPDATE USER
+    ========================= */
+
+    user.balance = amount;
+    user.updatedAt = new Date();
+
+    await user.save();
+
+    /* =========================
+       CREATE TRANSACTION
+    ========================= */
+
+    if (delta !== 0) {
+      await Transaction.create({
+        userId: String(user._id),
+
+        type: delta > 0 ? "deposit" : "withdraw",
+
+        amount: Math.abs(delta),
+
+        balanceBefore: previousBalance,
+
+        balanceAfter: amount,
+
+        status: "completed",
+
+        note: "Admin balance update",
+
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+
+    /* =========================
+       BUILD UPDATED ACCOUNT
+    ========================= */
+
+    const payload = await buildAccountForUser(user);
+
+    /* =========================
+       LOAD UPDATED TRANSACTIONS
+    ========================= */
+
+    const transactions = await loadTransactionsForUser(
+      user._id,
+      50
+    );
+
+    /* =========================
+       REALTIME EMITS
+    ========================= */
+
+    io.emit(`balance:${userId}`, amount);
+
+    io.emit("account:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit(`account:${userId}`, {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+    io.emit(`transactions:${userId}`, transactions);
+
+    io.emit("admin:user:update", {
+      userId: String(userId),
+      account: payload.account,
+      wallet: payload.wallet,
+      balance: amount,
+    });
+
+    emitStateUpdates(
+      String(userId),
+      {
+        account: payload.account,
+        wallet: payload.wallet,
+      },
+      null,
+      null
+    );
+
+    return res.json({
+      ok: true,
+      msg: "Saldo actualizado",
+      balance: amount,
+      transactions,
+      account: payload.account,
+      wallet: payload.wallet,
+    });
+
+  } catch (err) {
+    console.error("/api/admin/update-balance error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error actualizando saldo",
+      error: err?.message || String(err),
+    });
   }
-);
+});
+
+                 
 /* ======================================================
    COUNTER OFFER WITHDRAW
 ====================================================== */
