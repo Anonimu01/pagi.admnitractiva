@@ -1178,19 +1178,57 @@ function openWithdrawDetail(withdraw) {
 }
 
 async function sendWithdrawMessage(id) {
-  const message = document.getElementById("withdrawMessage")?.value || "";
-  if (!message.trim()) return alert("Escribe un mensaje");
+  const adminMessage =
+    document.getElementById("withdrawMessage")?.value || "";
+
+  if (!adminMessage.trim()) {
+    return alert("Escribe un mensaje");
+  }
 
   try {
-    await apiFetch(API + "/admin/withdraw/message", {
-      method: "POST",
-      body: JSON.stringify({ id, message })
-    });
+    const endpoints = [
+      API + "/admin/withdraw/message",
+      API + "/admin/withdraws/message",
+      API + "/admin/message-withdraw"
+    ];
 
-    if (currentUser) await loadWithdraws(getUserId(currentUser), true);
+    let ok = false;
 
-    const refreshed = allWithdraws.find(w => String(w._id) === String(id));
-    if (refreshed) openWithdrawDetail(refreshed);
+    for (const url of endpoints) {
+      try {
+        await apiFetch(url, {
+          method: "POST",
+          body: JSON.stringify({
+            id,
+            adminMessage
+          })
+        });
+
+        ok = true;
+        break;
+      } catch (err) {
+        console.log("Ruta falló:", url);
+      }
+    }
+
+    if (!ok) {
+      return alert("No existe ruta de mensajes en backend");
+    }
+
+    document.getElementById("withdrawMessage").value = "";
+
+    if (currentUser) {
+      await loadWithdraws(getUserId(currentUser), true);
+    }
+
+    const refreshed = allWithdraws.find(
+      w => String(w._id) === String(id)
+    );
+
+    if (refreshed) {
+      openWithdrawDetail(refreshed);
+    }
+
     toast("Mensaje enviado");
   } catch (e) {
     console.error(e);
