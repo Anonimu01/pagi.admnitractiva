@@ -13,7 +13,7 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 const cookieParser = require("cookie-parser");
-
+const User = require("./models/User");
 
 
 /* ======================================================
@@ -1743,6 +1743,51 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
     }
 
     const wallet = await getWalletDocForUser(user._id);
+
+
+
+       /* ======================================================
+   UPDATE LEVERAGE
+====================================================== */
+app.post("/api/admin/update-leverage", async (req, res) => {
+  try {
+    const { userId, leverage } = req.body || {};
+
+    if (!userId || leverage === undefined) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Datos incompletos"
+      });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { leverage: Number(leverage) },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado"
+      });
+    }
+
+    res.json({
+      ok: true,
+      msg: "Apalancamiento actualizado",
+      leverage: user.leverage
+    });
+
+  } catch (err) {
+    console.error("UPDATE LEVERAGE ERROR:", err);
+
+    res.status(500).json({
+      ok: false,
+      msg: "Error actualizando apalancamiento"
+    });
+  }
+});
 
 
     /* =========================
