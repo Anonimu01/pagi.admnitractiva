@@ -1710,7 +1710,7 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   }
 });
 
-      /* ======================================================
+     /* ======================================================
    UPDATE BALANCE COMPATIBILITY
 ====================================================== */
 app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
@@ -1828,12 +1828,10 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 });
 
 
+
 /* ======================================================
    UPDATE LEVERAGE
 ====================================================== */
-
-console.log("UPDATE LEVERAGE ROUTE LOADED");
-
 app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
