@@ -2811,6 +2811,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 app.use(express.static(path.join(__dirname, "public")));
+
+/* ======================================================
+   ROOT
+====================================================== */
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "admin.html"));
+});
 /* =========================
    START / SHUTDOWN
 ========================= */
