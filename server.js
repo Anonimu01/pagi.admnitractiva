@@ -1630,6 +1630,179 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 });
 
 
+/* ======================================================
+   COUNTER OFFER WITHDRAW
+====================================================== */
+app.post("/api/admin/withdraw/counter", ensureAdminAuth, async (req, res) => {
+  try {
+    const { id, offerAmount, adminNote } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "ID requerido",
+      });
+    }
+
+    const amount = Number(offerAmount || 0);
+
+    if (Number.isNaN(amount) || amount < 0) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Monto inválido",
+      });
+    }
+
+    const Withdraw =
+      mongoose.models.Withdraw ||
+      mongoose.models.Withdrawal;
+
+    if (!Withdraw) {
+      return res.status(500).json({
+        ok: false,
+        msg: "Modelo Withdraw no encontrado",
+      });
+    }
+
+    const withdraw = await Withdraw.findById(id);
+
+    if (!withdraw) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
+
+    withdraw.status = "counter_offer";
+    withdraw.offerAmount = amount;
+    withdraw.adminNote = adminNote || "";
+
+    if (!Array.isArray(withdraw.messages)) {
+      withdraw.messages = [];
+    }
+
+    withdraw.messages.push({
+      sender: "admin",
+      message:
+        adminNote ||
+        `Contraoferta enviada: US$${amount}`,
+      createdAt: new Date(),
+    });
+
+    withdraw.processedAt = new Date();
+
+    await withdraw.save();
+
+    const user = await User.findById(
+      withdraw.userId
+    ).catch(() => null);
+
+    if (typeof sendWithdrawEmailNotification === "function") {
+      await sendWithdrawEmailNotification({
+        user,
+        status: "counter",
+        amount,
+        adminNote,
+      });
+    }
+
+    io.emit("admin:withdraw-update", withdraw);
+    io.emit("withdraw:update", withdraw);
+
+    return res.json({
+      ok: true,
+      msg: "Contraoferta enviada",
+      withdraw,
+    });
+  } catch (err) {
+    console.error("counter withdraw error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error enviando contraoferta",
+    });
+  }
+});
+
+
+
+
+/* ======================================================
+   ACCEPT WITHDRAW OFFER
+====================================================== */
+app.post("/api/withdraw/accept-offer", async (req, res) => {
+  try {
+    const { id } = req.body || {};
+
+    if (!id) {
+      return res.status(400).json({
+        ok: false,
+        msg: "ID requerido",
+      });
+    }
+
+    const Withdraw =
+      mongoose.models.Withdraw ||
+      mongoose.models.Withdrawal;
+
+    if (!Withdraw) {
+      return res.status(500).json({
+        ok: false,
+        msg: "Modelo Withdraw no encontrado",
+      });
+    }
+
+    const withdraw = await Withdraw.findById(id);
+
+    if (!withdraw) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Retiro no encontrado",
+      });
+    }
+
+    withdraw.status = "approved";
+
+    if (
+      withdraw.offerAmount &&
+      Number(withdraw.offerAmount) > 0
+    ) {
+      withdraw.amount = Number(withdraw.offerAmount);
+    }
+
+    withdraw.processedAt = new Date();
+
+    if (!Array.isArray(withdraw.messages)) {
+      withdraw.messages = [];
+    }
+
+    withdraw.messages.push({
+      sender: "system",
+      message: "Contraoferta aceptada",
+      createdAt: new Date(),
+    });
+
+    await withdraw.save();
+
+    io.emit("admin:withdraw-update", withdraw);
+    io.emit("withdraw:update", withdraw);
+
+    return res.json({
+      ok: true,
+      msg: "Contraoferta aceptada",
+      withdraw,
+    });
+  } catch (err) {
+    console.error("accept offer error:", err);
+
+    return res.status(500).json({
+      ok: false,
+      msg: "Error aceptando oferta",
+    });
+  }
+});
+
+
  /* ======================================================
    UPDATE USER LEVERAGE
 ====================================================== */
