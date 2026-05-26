@@ -1527,6 +1527,58 @@ app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, 
     return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
   }
 });
+
+/* ======================================================
+   DEPOSIT / WITHDRAW
+====================================================== */
+app.post(["/api/admin/deposit", "/api/deposit"], ensureAdminAuth, async (req, res) => {
+  try {
+    const { userId, amount, leverage, note, currency } = req.body || {};
+    if (!userId || typeof amount === "undefined" || amount === null || amount === "") {
+      return res.status(400).json({ ok: false, error: "userId y amount son requeridos" });
+    }
+
+    const numericAmount = normalizeNumber(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({ ok: false, error: "amount inválido" });
+    }
+
+    const remote = await proxyToCore(req, "/api/admin/deposit", {
+      method: "POST",
+      body: {
+        userId,
+        amount: numericAmount,
+        leverage: leverage !== undefined ? Number(leverage) : undefined,
+        note: note || "Admin deposit",
+        currency: currency || "USD",
+      },
+    });
+
+    if (remote.ok) {
+      if (remote.headers) relaySetCookies(remote.headers, res);
+      const tx = remote.data?.data?.transaction || remote.data?.transaction || null;
+      const account = remote.data?.data?.account || remote.data?.account || null;
+      const wallet = remote.data?.data?.wallet || remote.data?.wallet || null;
+      const balance = remote.data?.data?.balance ?? remote.data?.balance ?? account?.balance ?? null;
+      emitStateUpdates(userId, { account, wallet }, null, tx);
+      if (balance !== null) io.emit(`balance:${userId}`, balance);
+      return res.status(remote.status).json(remote.data);
+    }
+
+    const local = await localDeposit({
+      userId,
+      amount: numericAmount,
+      leverage: leverage !== undefined ? Number(leverage) : undefined,
+      note: note || "Admin deposit",
+      currency: currency || "USD",
+    });
+
+    return res.status(local.status).json(local.data);
+  } catch (err) {
+    console.error("/api/admin/deposit error:", err);
+    return res.status(500).json({ ok: false, msg: "Error depósito" });
+  }
+});
 /* ======================================================
    COUNTER OFFER WITHDRAW
 ====================================================== */
