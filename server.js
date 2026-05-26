@@ -19,6 +19,11 @@ const cookieParser = require("cookie-parser");
 /* ======================================================
    APP
 ====================================================== */
+const {
+  sendWithdrawEmailNotification,
+  sendDocumentEmailNotification,
+  sendClientMessageNotification,
+} = require("./services/emailService");
 
 const app = express();
 
