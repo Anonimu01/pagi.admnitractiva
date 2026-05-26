@@ -1746,49 +1746,47 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 
 
 
-       /* ======================================================
-   UPDATE LEVERAGE
+     /* ======================================================
+   UPDATE USER LEVERAGE
 ====================================================== */
-app.post("/api/admin/update-leverage", async (req, res) => {
+app.post("/api/admin/update-leverage", ensureAdminAuth, async (req, res) => {
   try {
     const { userId, leverage } = req.body || {};
 
     if (!userId || leverage === undefined) {
       return res.status(400).json({
         ok: false,
-        msg: "Datos incompletos"
+        msg: "Datos incompletos",
       });
     }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { leverage: Number(leverage) },
-      { new: true }
-    );
+    const user = await User.findById(userId);
 
     if (!user) {
       return res.status(404).json({
         ok: false,
-        msg: "Usuario no encontrado"
+        msg: "Usuario no encontrado",
       });
     }
 
-    res.json({
+    user.leverage = Number(leverage);
+
+    await user.save();
+
+    return res.json({
       ok: true,
       msg: "Apalancamiento actualizado",
-      leverage: user.leverage
+      leverage: user.leverage,
     });
-
   } catch (err) {
-    console.error("UPDATE LEVERAGE ERROR:", err);
+    console.error("update leverage error:", err);
 
-    res.status(500).json({
+    return res.status(500).json({
       ok: false,
-      msg: "Error actualizando apalancamiento"
+      msg: "Error del servidor",
     });
   }
 });
-
 
     /* =========================
        UPDATE WALLET
