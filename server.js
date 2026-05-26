@@ -1710,61 +1710,39 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   }
 });
 
-    /* ======================================================
-   UPDATE BALANCE
+   /* ======================================================
+   UPDATE BALANCE COMPATIBILITY
 ====================================================== */
-app.post(["/api/admin/update-balance", "/api/update-balance"], ensureAdminAuth, async (req, res) => {
+app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
   try {
-    const { userId, balance, leverage, note } = req.body || {};
-    if (!userId) return res.status(400).json({ ok: false, msg: "userId requerido" });
+    const { userId, balance } = req.body || {};
 
-    const result = await depositByDelta(req, res, userId, balance, leverage, note || "Update balance");
-    if (result?.headers) relaySetCookies(result.headers, res);
+    if (!userId || balance === undefined || balance === null) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Datos incompletos",
+      });
+    }
 
-    if (result && result.ok) return res.status(result.status).json(result.data);
-    return res.status(result?.status || 500).json(result?.data || { ok: false, msg: "Error actualizando saldo" });
-  } catch (err) {
-    console.error("/api/admin/update-balance error:", err);
-    return res.status(500).json({ ok: false, msg: "Error actualizando saldo" });
-  }
-});
+    const amount = Number(balance);
 
-
-
-/* ======================================================
-   UPDATE LEVERAGE
-====================================================== */
-app.post(["/api/admin/update-leverage", "/api/update-leverage"], ensureAdminAuth, async (req, res) => {
-  try {
-    const { userId, leverage } = req.body || {};
-    if (!userId || typeof leverage === "undefined" || leverage === null || leverage === "") {
-      return res.status(400).json({ msg: "Datos incompletos" });
+    if (!Number.isFinite(amount)) {
+      return res.status(400).json({
+        ok: false,
+        msg: "Balance inválido",
+      });
     }
 
     const user = await User.findById(userId).catch(() => null);
-    if (!user) return res.status(404).json({ msg: "Usuario no encontrado" });
 
-    const lev = Number(leverage);
-    if (!Number.isFinite(lev) || lev <= 0) return res.status(400).json({ msg: "Leverage inválido" });
+    if (!user) {
+      return res.status(404).json({
+        ok: false,
+        msg: "Usuario no encontrado",
+      });
+    }
 
     const wallet = await getWalletDocForUser(user._id);
-    wallet.leverageFactor = lev;
-    wallet.updatedAt = new Date();
-    await wallet.save();
-
-    user.leverage = lev;
-    user.updatedAt = new Date();
-    await user.save();
-
-    const account = await buildAccountForUser(user);
-    emitStateUpdates(userId, account, null, null);
-
-    return res.json({ ok: true, msg: "Leverage actualizado", leverage: lev, account: account.account, wallet: account.wallet });
-  } catch (err) {
-    console.error("/api/admin/update-leverage error:", err);
-    return res.status(500).json({ msg: "Error actualizando leverage" });
-  }
-});
 
 
     /* =========================
