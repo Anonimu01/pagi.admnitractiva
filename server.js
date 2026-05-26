@@ -1509,7 +1509,7 @@ app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   }
 });
 
-   /* ======================================================
+  /* ======================================================
    UPDATE BALANCE COMPATIBILITY
 ====================================================== */
 app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
@@ -1543,9 +1543,17 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
 
     const wallet = await getWalletDocForUser(user._id);
 
+    /* =========================
+       SAVE PREVIOUS BALANCE
+    ========================= */
 
+    const previousBalance = Number(
+      wallet.balanceOwn ??
+      wallet.balance ??
+      user.balance ??
+      0
+    );
 
-    
     /* =========================
        UPDATE WALLET
     ========================= */
@@ -1570,10 +1578,69 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
     await user.save();
 
     /* =========================
+       CREATE TRANSACTION
+    ========================= */
+
+    const difference = amount - previousBalance;
+
+    if (difference !== 0) {
+      try {
+        await Transaction.create({
+          userId: String(user._id),
+
+          type: difference > 0
+            ? "deposit"
+            : "withdraw",
+
+          amount: Math.abs(difference),
+
+          status: "completed",
+
+          method: "admin_balance_update",
+
+          note:
+            difference > 0
+              ? "Depósito manual administrador"
+              : "Retiro manual administrador",
+
+          balanceBefore: previousBalance,
+
+          balanceAfter: amount,
+
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      } catch (txErr) {
+        console.error(
+          "transaction create error:",
+          txErr
+        );
+      }
+    }
+
+    /* =========================
        BUILD UPDATED ACCOUNT
     ========================= */
 
     const payload = await buildAccountForUser(user);
+
+    /* =========================
+       LOAD UPDATED TRANSACTIONS
+    ========================= */
+
+    let transactions = [];
+
+    try {
+      transactions = await loadTransactionsForUser(
+        user._id,
+        50
+      );
+    } catch (e) {
+      console.error(
+        "loadTransactionsForUser error:",
+        e
+      );
+    }
 
     /* =========================
        REALTIME EMITS
@@ -1600,6 +1667,17 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
       balance: amount,
     });
 
+    /* =========================
+       TRANSACTION EMITS
+    ========================= */
+
+    io.emit(`transactions:${userId}`, transactions);
+
+    io.emit("transactions:update", {
+      userId: String(userId),
+      transactions,
+    });
+
     emitStateUpdates(
       String(userId),
       {
@@ -1607,15 +1685,18 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
         wallet: payload.wallet,
       },
       null,
-      null
+      transactions?.[0] || null
     );
 
     return res.json({
       ok: true,
       msg: "Saldo actualizado",
       balance: amount,
+      previousBalance,
+      difference,
       account: payload.account,
       wallet: payload.wallet,
+      transactions,
     });
 
   } catch (err) {
@@ -1628,7 +1709,6 @@ app.post("/api/admin/update-balance", ensureAdminAuth, async (req, res) => {
     });
   }
 });
-
 
 /* ======================================================
    COUNTER OFFER WITHDRAW
