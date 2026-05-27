@@ -933,429 +933,214 @@ let zohoAccessTokenExpiresAt = 0;
 let zohoSyncLock = false;
 const zohoQueue = new Set();
 
+const fetchFn = global.fetch; // 🔥 FIX CRÍTICO
+
 function zohoReady() {
-  return !!(process.env.ZOHO_ENABLED !== "false" && process.env.ZOHO_CLIENT_ID && process.env.ZOHO_CLIENT_SECRET && process.env.ZOHO_REFRESH_TOKEN);
+  return !!(
+    process.env.ZOHO_ENABLED !== "false" &&
+    process.env.ZOHO_CLIENT_ID &&
+    process.env.ZOHO_CLIENT_SECRET &&
+    process.env.ZOHO_REFRESH_TOKEN
+  );
 }
 
 async function getZohoAccessToken() {
-  if (!zohoReady() || !fetchFn) return null;
-  const now = Date.now();
-  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30_000) return zohoAccessTokenCache;
+  if (!zohoReady()) return null;
 
-  const url = `${(process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "")}/oauth/v2/token?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}&client_id=${encodeURIComponent(process.env.ZOHO_CLIENT_ID)}&client_secret=${encodeURIComponent(process.env.ZOHO_CLIENT_SECRET)}&grant_type=refresh_token`;
+  const now = Date.now();
+  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30000) {
+    return zohoAccessTokenCache;
+  }
+
+  const url =
+    `${(process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "")}` +
+    `/oauth/v2/token?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}` +
+    `&client_id=${encodeURIComponent(process.env.ZOHO_CLIENT_ID)}` +
+    `&client_secret=${encodeURIComponent(process.env.ZOHO_CLIENT_SECRET)}` +
+    `&grant_type=refresh_token`;
+
   const response = await fetchFn(url, { method: "POST" });
+
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data?.access_token) throw new Error(`Zoho token error: ${data?.error || data?.error_description || response.statusText}`);
+
+  if (!response.ok || !data?.access_token) {
+    throw new Error(
+      `Zoho token error: ${data?.error || data?.error_description || response.statusText}`
+    );
+  }
 
   zohoAccessTokenCache = data.access_token;
-  const expiresInSec = Number(data.expires_in || 3600);
-  zohoAccessTokenExpiresAt = Date.now() + expiresInSec * 1000;
+  zohoAccessTokenExpiresAt = Date.now() + (Number(data.expires_in || 3600) * 1000);
+
   return zohoAccessTokenCache;
 }
 
-async function zohoRequest(pathname, options = {}) {
+async function zohoRequest(path, options = {}) {
   const token = await getZohoAccessToken();
   if (!token) throw new Error("Zoho no configurado");
-  const res = await fetchFn(`${(process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "")}/crm/v8${pathname}`, {
-    method: options.method || "GET",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+
+  const res = await fetchFn(
+    `${(process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "")}/crm/v8${path}`,
+    {
+      method: options.method || "GET",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    }
+  );
+
   const text = await res.text();
   let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
   return { ok: res.ok, status: res.status, data };
 }
 
-function normalizeCoreUser(raw = {}) {
-  const email = String(raw.email || raw.emailAddress || raw.correo || "").trim().toLowerCase();
-  const phone = String(raw.phone || raw.telefono || raw.mobile || "").trim();
-  const address = String(raw.address || raw.direccion || raw.street || "").trim();
-  const fullName = String(raw.fullName || raw.nombre || raw.name || "").trim();
-  const parts = normalizeNameParts(fullName);
-  const firstName = String(raw.firstName || raw.nombre1 || parts.firstName || "").trim();
-  const lastName = String(raw.lastName || raw.apellido || parts.lastName || "").trim();
-  const balance = normalizeNumber(raw.balance, 0);
-  const leverage = normalizeNumber(raw.leverage, 1);
-  const sourceId = String(raw.id || raw._id || raw.userId || raw.sourceId || "").trim();
+function buildZohoPayload(userDoc) {
+  const fullName =
+    userDoc.fullName ||
+    [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") ||
+    userDoc.email ||
+    "Cliente";
 
   return {
-    sourceId,
-    email,
-    firstName,
-    lastName,
-    fullName: fullName || [firstName, lastName].filter(Boolean).join(" ").trim() || email,
-    phone,
-    address,
-    balance,
-    leverage,
-    currency: String(raw.currency || "USD").toUpperCase(),
-    source: String(raw.source || raw.origin || "core"),
-    raw,
+    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]: userDoc.firstName || "Cliente",
+    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]: userDoc.lastName || fullName,
+    [process.env.ZOHO_EMAIL_FIELD || "Email"]: userDoc.email || undefined,
+    [process.env.ZOHO_PHONE_FIELD || "Phone"]: userDoc.phone || undefined,
+    [process.env.ZOHO_ADDRESS_FIELD || "Street"]: userDoc.address || undefined,
+    [process.env.ZOHO_COMPANY_FIELD || "Company"]: "Leones Broker",
+
+    Lead_Source: "Leones Broker",
+    Lead_Status: "Nuevo",
+
+    Description: `Sincronizado desde plataforma. Balance: ${userDoc.balance ?? 0}, Leverage: ${userDoc.leverage ?? 1}`,
   };
-}
-
-async function upsertLocalUserFromCore(rawUser) {
-  const u = normalizeCoreUser(rawUser);
-  if (!u.email && !u.sourceId) return null;
-
-  const query = u.email ? { email: u.email } : { sourceId: u.sourceId };
-  let doc = await User.findOne(query).catch(() => null);
-
-  if (!doc) {
-    doc = new User({
-      sourceId: u.sourceId || undefined,
-      email: u.email || undefined,
-      firstName: u.firstName,
-      lastName: u.lastName,
-      fullName: u.fullName,
-      phone: u.phone,
-      address: u.address,
-      balance: u.balance,
-      leverage: u.leverage,
-      currency: u.currency,
-      source: u.source,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-  } else {
-    if (u.sourceId) doc.sourceId = u.sourceId;
-    if (u.email) doc.email = u.email;
-    doc.firstName = u.firstName || doc.firstName || "";
-    doc.lastName = u.lastName || doc.lastName || "";
-    doc.fullName = u.fullName || doc.fullName || "";
-    doc.phone = u.phone || doc.phone || "";
-    doc.address = u.address || doc.address || "";
-    if (Number.isFinite(u.balance)) doc.balance = u.balance;
-    if (Number.isFinite(u.leverage)) doc.leverage = u.leverage;
-    doc.currency = u.currency || doc.currency || "USD";
-    doc.source = u.source || doc.source || "core";
-    doc.updatedAt = new Date();
-  }
-
-  await doc.save();
-  return doc;
 }
 
 async function getExistingZohoIdForUser(userDoc) {
   if (userDoc?.zohoLeadId) return { module: "Leads", id: userDoc.zohoLeadId };
   if (userDoc?.zohoContactId) return { module: "Contacts", id: userDoc.zohoContactId };
 
-  if (userDoc?.email && zohoReady()) {
-    try {
-      const crit = encodeURIComponent(`(${process.env.ZOHO_EMAIL_FIELD || "Email"}:equals:${userDoc.email})`);
-      const leadSearch = await zohoRequest(`/Leads/search?criteria=${crit}`);
-      const leadId = leadSearch?.data?.data?.[0]?.id;
-      if (leadId) return { module: "Leads", id: leadId };
-      const contactSearch = await zohoRequest(`/Contacts/search?criteria=${crit}`);
-      const contactId = contactSearch?.data?.data?.[0]?.id;
-      if (contactId) return { module: "Contacts", id: contactId };
-    } catch {}
+  if (!userDoc?.email) return null;
+
+  try {
+    const crit = encodeURIComponent(`(Email:equals:${userDoc.email})`);
+
+    const lead = await zohoRequest(`/Leads/search?criteria=${crit}`);
+    const leadId = lead?.data?.data?.[0]?.id;
+    if (leadId) return { module: "Leads", id: leadId };
+
+    const contact = await zohoRequest(`/Contacts/search?criteria=${crit}`);
+    const contactId = contact?.data?.data?.[0]?.id;
+    if (contactId) return { module: "Contacts", id: contactId };
+
+  } catch (e) {
+    console.warn("Zoho search error:", e?.message);
   }
 
   return null;
 }
 
-function buildZohoPayload(userDoc) {
+async function createOrUpdateZohoRecord(userDoc) {
+  if (!zohoReady()) {
+    return { ok: false, skipped: true, reason: "zoho_not_configured" };
+  }
 
-  const fullName = String(
-    userDoc.fullName ||
-    [userDoc.firstName, userDoc.lastName]
-      .filter(Boolean)
-      .join(" ") ||
-    userDoc.email ||
-    "Cliente"
-  ).trim();
+  const payload = buildZohoPayload(userDoc);
 
-  const firstName = String(
-    userDoc.firstName || ""
-  ).trim();
+  const existing = await getExistingZohoIdForUser(userDoc);
 
-  const lastName = String(
-    userDoc.lastName ||
-    fullName ||
-    userDoc.email ||
-    "Cliente"
-  ).trim();
+  // =========================
+  // UPDATE
+  // =========================
+  if (existing?.id) {
+    const update = await zohoRequest(`/${existing.module}/${existing.id}`, {
+      method: "PUT",
+      body: { data: [payload] },
+    });
 
-  const address = String(
-    userDoc.address || ""
-  ).trim();
+    if (update.ok && update.data?.data) {
+      return {
+        ok: true,
+        action: "updated",
+        module: existing.module,
+        zohoId: existing.id,
+      };
+    }
+  }
 
-  const phone = String(
-    userDoc.phone || ""
-  ).trim();
+  // =========================
+  // CREATE
+  // =========================
+  let moduleToUse = process.env.ZOHO_MODULE || "Leads";
 
-  const email = String(
-    userDoc.email || ""
-  ).trim().toLowerCase();
+  let create = await zohoRequest(`/${moduleToUse}`, {
+    method: "POST",
+    body: { data: [payload] },
+  });
+
+  if (!create.ok || !create.data?.data?.length) {
+    moduleToUse = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+
+    create = await zohoRequest(`/${moduleToUse}`, {
+      method: "POST",
+      body: { data: [payload] },
+    });
+  }
+
+  if (!create.ok || !create.data?.data?.length) {
+    throw new Error(JSON.stringify(create.data || "Zoho create failed"));
+  }
+
+  const record = create.data.data[0];
+  const zohoId = record?.details?.id || record?.id;
 
   return {
-
-    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]:
-      firstName || "Cliente",
-
-    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]:
-      lastName || fullName || "Cliente",
-
-    [process.env.ZOHO_EMAIL_FIELD || "Email"]:
-      email || undefined,
-
-    [process.env.ZOHO_PHONE_FIELD || "Phone"]:
-      phone || undefined,
-
-    [process.env.ZOHO_ADDRESS_FIELD || "Street"]:
-      address || undefined,
-
-    [process.env.ZOHO_COMPANY_FIELD || "Company"]:
-      "Leones Broker",
-
-    Lead_Source:
-      "Leones Broker",
-
-    Lead_Status:
-      "Nuevo",
-
-    Description:
-      `Sincronizado desde Leones Broker. Balance: ${userDoc.balance ?? 0}. Leverage: ${userDoc.leverage ?? 1}.`,
+    ok: true,
+    action: "created",
+    module: moduleToUse,
+    zohoId,
   };
-}
-
-async function createOrUpdateZohoRecord(userDoc) {
-  if (!zohoReady()) return { ok: false, skipped: true, reason: "zoho_not_configured" };
-  const payload = buildZohoPayload(userDoc);
-  const existing = await getExistingZohoIdForUser(userDoc);
-  if (existing?.id) {
-    const update = await zohoRequest(`/${existing.module}/${existing.id}`, { method: "PUT", body: { data: [payload] } });
-    if (update.ok) return { ok: true, action: "updated", module: existing.module, data: update.data };
-  }
-
-  let moduleToUse = process.env.ZOHO_MODULE || "Leads";
-  let create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } });
-  if (!create.ok && moduleToUse !== (process.env.ZOHO_FALLBACK_MODULE || "Contacts")) {
-    moduleToUse = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-    create = await zohoRequest(`/${moduleToUse}`, { method: "POST", body: { data: [payload] } });
-  }
-  if (!create.ok) throw new Error(JSON.stringify(create.data || { msg: "Zoho create failed" }));
-  const record = create.data?.data?.[0];
-  const zohoId = record?.details?.id || record?.id || "";
-  return { ok: true, action: "created", module: moduleToUse, zohoId, data: create.data };
-}
-
-   /* ======================================================
-   ZOHO CRM
-====================================================== */
-
-async function createZohoLead(data = {}) {
-  try {
-
-    if (
-      !process.env.ZOHO_CLIENT_ID ||
-      !process.env.ZOHO_CLIENT_SECRET ||
-      !process.env.ZOHO_REFRESH_TOKEN
-    ) {
-      console.warn("⚠️ Zoho CRM no configurado");
-      return null;
-    }
-
-    // =========================
-    // GET ACCESS TOKEN
-    // =========================
-
-    const tokenResponse = await fetch(
-      "https://accounts.zoho.com/oauth/v2/token",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          refresh_token:
-            process.env.ZOHO_REFRESH_TOKEN,
-          client_id:
-            process.env.ZOHO_CLIENT_ID,
-          client_secret:
-            process.env.ZOHO_CLIENT_SECRET,
-          grant_type: "refresh_token",
-        }),
-      }
-    );
-
-    const tokenData = await tokenResponse.json();
-
-    const accessToken = tokenData.access_token;
-
-    if (!accessToken) {
-      console.error(
-        "❌ ZOHO TOKEN ERROR:",
-        tokenData
-      );
-      return null;
-    }
-
-    // =========================
-    // CREATE LEAD
-    // =========================
-
-    const payload = {
-      data: [
-        {
-          Last_Name:
-            data.fullName || "Cliente",
-
-          Phone:
-            data.phone || "",
-
-          Street:
-            data.address || "",
-
-          Lead_Status:
-            "Nuevo",
-
-          Description:
-            "Cliente registrado automáticamente desde la plataforma.",
-
-          Company:
-            "Leones Broker",
-        },
-      ],
-      trigger: [],
-    };
-
-    const response = await fetch(
-      "https://www.zohoapis.com/crm/v2/Leads",
-      {
-        method: "POST",
-        headers: {
-          Authorization:
-            `Zoho-oauthtoken ${accessToken}`,
-
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify(payload),
-      }
-    );
-
-    const result = await response.json();
-
-    console.log(
-      "✅ ZOHO LEAD CREATED:",
-      JSON.stringify(result, null, 2)
-    );
-
-    return result;
-
-  } catch (err) {
-
-    console.error(
-      "❌ createZohoLead error:",
-      err
-    );
-
-    return null;
-  }
 }
 
 async function syncUserToZohoAndMark(userDoc) {
   if (!userDoc) return null;
+
   try {
     const zoho = await createOrUpdateZohoRecord(userDoc);
+
     if (zoho?.ok) {
-      userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
-      if (zoho.module === "Leads" && zoho.zohoId) userDoc.zohoLeadId = zoho.zohoId;
-      if (zoho.module === "Contacts" && zoho.zohoId) userDoc.zohoContactId = zoho.zohoId;
+      userDoc.zohoModule = zoho.module || "";
+      if (zoho.module === "Leads") userDoc.zohoLeadId = zoho.zohoId;
+      if (zoho.module === "Contacts") userDoc.zohoContactId = zoho.zohoId;
+
       userDoc.zohoSyncStatus = "synced";
       userDoc.zohoLastError = "";
       userDoc.zohoSyncedAt = new Date();
       userDoc.updatedAt = new Date();
+
       await userDoc.save().catch(() => null);
-      return zoho;
     }
+
     return zoho;
   } catch (err) {
     userDoc.zohoSyncStatus = "error";
     userDoc.zohoLastError = err?.message || String(err);
     userDoc.zohoSyncedAt = new Date();
     userDoc.updatedAt = new Date();
+
     await userDoc.save().catch(() => null);
+
     return { ok: false, error: err?.message || String(err) };
-  }
-}
-
-async function fetchCoreUsersOnce() {
-  if (!CORE_API_URL || !fetchFn) return [];
-  const endpoints = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers").split(",").map((s) => s.trim()).filter(Boolean);
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetchFn(buildCoreUrl(endpoint), {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-api-key": ADMIN_API_KEY,
-          "x-admin-key": ADMIN_API_KEY,
-          authorization: `Bearer ${JWT_SECRET}`,
-        },
-      });
-      if (!response.ok) continue;
-      const data = await response.json().catch(() => null);
-      const arr = Array.isArray(data) ? data : Array.isArray(data?.users) ? data.users : Array.isArray(data?.data) ? data.data : Array.isArray(data?.result) ? data.result : [];
-      if (arr.length) return arr;
-    } catch (err) {
-      console.warn(`fetchCoreUsersOnce fail ${endpoint}:`, err?.message || err);
-    }
-  }
-  return [];
-}
-
-async function syncCoreUsersToLocalAndZoho() {
-  if (zohoSyncLock) return { ok: false, skipped: true, reason: "sync_locked" };
-  zohoSyncLock = true;
-  try {
-    const coreUsers = await fetchCoreUsersOnce();
-    if (!Array.isArray(coreUsers) || coreUsers.length === 0) return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
-    let created = 0;
-    let updated = 0;
-    let zohoCount = 0;
-    const errors = [];
-    for (const raw of coreUsers) {
-      const before = await User.findOne(
-        raw?.email ? { email: String(raw.email).trim().toLowerCase() } : raw?.id || raw?._id ? { sourceId: String(raw.id || raw._id) } : null
-      ).catch(() => null);
-      const doc = await upsertLocalUserFromCore(raw);
-      if (!doc) continue;
-      if (!before) created += 1;
-      else updated += 1;
-      const z = await syncUserToZohoAndMark(doc);
-      if (z?.ok) zohoCount += 1;
-      if (z?.error) errors.push({ email: doc.email, error: z.error });
-    }
-    return { ok: true, synced: coreUsers.length, created, updated, zoho: zohoCount, errors };
-  } finally {
-    zohoSyncLock = false;
-  }
-}
-
-async function syncSingleUserToZohoById(userId) {
-  const doc = await User.findById(userId).catch(() => null);
-  if (!doc) return { ok: false, msg: "Usuario no encontrado" };
-  return await syncUserToZohoAndMark(doc);
-}
-
-/* ======================================================
-   INITIAL CORE SYNC
-====================================================== */
-async function ensureInitialCoreSync() {
-  try {
-    const result = await syncCoreUsersToLocalAndZoho();
-    console.log("✅ Sync inicial core->local->zoho:", result);
-  } catch (err) {
-    console.warn("Sync inicial falló:", err?.message || err);
   }
 }
 /* ======================================================
