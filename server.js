@@ -933,6 +933,8 @@ let zohoAccessTokenExpiresAt = 0;
 let zohoSyncLock = false;
 const zohoQueue = new Set();
 
+const httpFetch = globalThis.fetch;
+
 function zohoReady() {
   return !!(
     process.env.ZOHO_ENABLED !== "false" &&
@@ -944,13 +946,12 @@ function zohoReady() {
 
 async function getZohoAccessToken() {
   if (!zohoReady()) return null;
+  if (typeof httpFetch !== "function") {
+    throw new Error("fetch no disponible en este entorno");
+  }
 
   const now = Date.now();
-
-  if (
-    zohoAccessTokenCache &&
-    now < zohoAccessTokenExpiresAt - 30000
-  ) {
+  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30000) {
     return zohoAccessTokenCache;
   }
 
@@ -961,57 +962,42 @@ async function getZohoAccessToken() {
     `&client_secret=${encodeURIComponent(process.env.ZOHO_CLIENT_SECRET)}` +
     `&grant_type=refresh_token`;
 
-  const response = await fetchFn(url, {
-    method: "POST",
-  });
-
+  const response = await httpFetch(url, { method: "POST" });
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !data?.access_token) {
     throw new Error(
-      `Zoho token error: ${
-        data?.error ||
-        data?.error_description ||
-        response.statusText
-      }`
+      `Zoho token error: ${data?.error || data?.error_description || response.statusText}`
     );
   }
 
   zohoAccessTokenCache = data.access_token;
-
-  zohoAccessTokenExpiresAt =
-    Date.now() +
-    Number(data.expires_in || 3600) * 1000;
+  zohoAccessTokenExpiresAt = Date.now() + Number(data.expires_in || 3600) * 1000;
 
   return zohoAccessTokenCache;
 }
 
 async function zohoRequest(path, options = {}) {
   const token = await getZohoAccessToken();
-
-  if (!token) {
-    throw new Error("Zoho no configurado");
+  if (!token) throw new Error("Zoho no configurado");
+  if (typeof httpFetch !== "function") {
+    throw new Error("fetch no disponible en este entorno");
   }
 
-  const res = await fetchFn(
+  const res = await httpFetch(
     `${(process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "")}/crm/v8${path}`,
     {
       method: options.method || "GET",
-
       headers: {
         Authorization: `Zoho-oauthtoken ${token}`,
         "Content-Type": "application/json",
         ...(options.headers || {}),
       },
-
-      body: options.body
-        ? JSON.stringify(options.body)
-        : undefined,
+      body: options.body ? JSON.stringify(options.body) : undefined,
     }
   );
 
   const text = await res.text();
-
   let data = {};
 
   try {
@@ -1026,14 +1012,14 @@ async function zohoRequest(path, options = {}) {
     data,
   };
 }
+
 function buildZohoPayload(userDoc) {
-  const fullName =
-    String(
-      userDoc.fullName ||
-        [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") ||
-        userDoc.email ||
-        "Cliente"
-    ).trim();
+  const fullName = String(
+    userDoc.fullName ||
+      [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") ||
+      userDoc.email ||
+      "Cliente"
+  ).trim();
 
   const firstName = String(userDoc.firstName || "").trim();
   const lastName = String(userDoc.lastName || fullName || "Cliente").trim();
@@ -1180,6 +1166,9 @@ async function syncUserToZohoAndMark(userDoc) {
 
 async function fetchCoreUsersOnce() {
   if (!CORE_API_URL) return [];
+  if (typeof httpFetch !== "function") {
+    throw new Error("fetch no disponible en este entorno");
+  }
 
   const endpoints = (process.env.CORE_USERS_ENDPOINTS || "/api/users,/api/admin/users,/api/clients,/api/leads,/api/registers")
     .split(",")
@@ -1188,7 +1177,7 @@ async function fetchCoreUsersOnce() {
 
   for (const endpoint of endpoints) {
     try {
-      const response = await zohoFetch(buildCoreUrl(endpoint), {
+      const response = await httpFetch(buildCoreUrl(endpoint), {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -1279,7 +1268,6 @@ async function ensureInitialCoreSync() {
     console.warn("Sync inicial falló:", err?.message || err);
   }
 }
-
 
 
 
