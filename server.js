@@ -943,10 +943,15 @@ function zohoReady() {
   );
 }
 
+/* ======================================================
+   GET ACCESS TOKEN
+====================================================== */
 async function getZohoAccessToken() {
 
   if (!zohoReady()) {
-    console.log("❌ ZOHO NOT READY");
+
+    console.log("❌ ZOHO NOT CONFIGURED");
+
     return null;
   }
 
@@ -968,7 +973,7 @@ async function getZohoAccessToken() {
     "https://accounts.zoho.com"
   ).replace(/\/+$/, "");
 
-  const url =
+  const tokenUrl =
     `${accountsUrl}/oauth/v2/token` +
     `?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}` +
     `&client_id=${encodeURIComponent(process.env.ZOHO_CLIENT_ID)}` +
@@ -977,17 +982,20 @@ async function getZohoAccessToken() {
 
   console.log("🔑 REQUESTING ZOHO TOKEN");
 
-  const response = await httpFetch(url, {
+  const response = await httpFetch(tokenUrl, {
     method: "POST",
   });
 
   const data = await response.json().catch(() => ({}));
 
-  console.log("🔑 TOKEN RESPONSE:", data);
+  console.log(
+    "🔑 TOKEN RESPONSE:",
+    JSON.stringify(data, null, 2)
+  );
 
   if (!response.ok || !data?.access_token) {
 
-    console.log("❌ TOKEN ERROR:", data);
+    console.log("❌ TOKEN ERROR");
 
     throw new Error(
       data?.error ||
@@ -1007,12 +1015,15 @@ async function getZohoAccessToken() {
   return zohoAccessTokenCache;
 }
 
+/* ======================================================
+   GENERIC REQUEST
+====================================================== */
 async function zohoRequest(path, options = {}) {
 
   const token = await getZohoAccessToken();
 
   if (!token) {
-    throw new Error("Token de Zoho inválido");
+    throw new Error("Token Zoho inválido");
   }
 
   const apiBase = (
@@ -1047,7 +1058,11 @@ async function zohoRequest(path, options = {}) {
   }
 
   console.log("📡 ZOHO STATUS:", response.status);
-  console.log("📡 ZOHO DATA:", JSON.stringify(data, null, 2));
+
+  console.log(
+    "📡 ZOHO RESPONSE:",
+    JSON.stringify(data, null, 2)
+  );
 
   return {
     ok: response.ok,
@@ -1056,6 +1071,9 @@ async function zohoRequest(path, options = {}) {
   };
 }
 
+/* ======================================================
+   BUILD PAYLOAD
+====================================================== */
 function buildZohoPayload(userDoc) {
 
   const rawName =
@@ -1068,14 +1086,14 @@ function buildZohoPayload(userDoc) {
 
   if (rawName) {
 
-    const split = String(rawName)
+    const parts = String(rawName)
       .trim()
       .split(" ");
 
-    firstName = split.shift() || "Cliente";
+    firstName = parts.shift() || "Cliente";
 
     lastName =
-      split.join(" ") ||
+      parts.join(" ") ||
       firstName ||
       "Cliente";
   }
@@ -1093,7 +1111,9 @@ function buildZohoPayload(userDoc) {
   }
 
   const payload = {
+
     First_Name: String(firstName).trim(),
+
     Last_Name: String(lastName).trim(),
 
     Email: String(
@@ -1131,6 +1151,9 @@ function buildZohoPayload(userDoc) {
   return payload;
 }
 
+/* ======================================================
+   SEARCH EXISTING USER
+====================================================== */
 async function getExistingZohoIdForUser(userDoc) {
 
   if (!userDoc?.email) {
@@ -1147,19 +1170,21 @@ async function getExistingZohoIdForUser(userDoc) {
       `(Email:equals:${email})`
     );
 
-    console.log("🔎 SEARCHING ZOHO:", email);
+    console.log("🔎 SEARCHING USER:", email);
 
-    const leadSearch =
-      await zohoRequest(
-        `/Leads/search?criteria=${criteria}`
-      );
+    const leadSearch = await zohoRequest(
+      `/Leads/search?criteria=${criteria}`
+    );
 
     const leadId =
       leadSearch?.data?.data?.[0]?.id;
 
     if (leadId) {
 
-      console.log("✅ FOUND LEAD:", leadId);
+      console.log(
+        "✅ LEAD FOUND:",
+        leadId
+      );
 
       return {
         module: "Leads",
@@ -1167,17 +1192,19 @@ async function getExistingZohoIdForUser(userDoc) {
       };
     }
 
-    const contactSearch =
-      await zohoRequest(
-        `/Contacts/search?criteria=${criteria}`
-      );
+    const contactSearch = await zohoRequest(
+      `/Contacts/search?criteria=${criteria}`
+    );
 
     const contactId =
       contactSearch?.data?.data?.[0]?.id;
 
     if (contactId) {
 
-      console.log("✅ FOUND CONTACT:", contactId);
+      console.log(
+        "✅ CONTACT FOUND:",
+        contactId
+      );
 
       return {
         module: "Contacts",
@@ -1196,11 +1223,14 @@ async function getExistingZohoIdForUser(userDoc) {
   return null;
 }
 
+/* ======================================================
+   CREATE OR UPDATE RECORD
+====================================================== */
 async function createOrUpdateZohoRecord(userDoc) {
 
   if (!zohoReady()) {
 
-    console.log("❌ ZOHO NOT CONFIGURED");
+    console.log("❌ ZOHO NOT READY");
 
     return {
       ok: false,
@@ -1221,33 +1251,32 @@ async function createOrUpdateZohoRecord(userDoc) {
     await getExistingZohoIdForUser(userDoc);
 
   /* ======================================================
-     UPDATE
+     UPDATE EXISTING
   ====================================================== */
 
   if (existing?.id) {
 
     console.log(
-      "♻️ UPDATING EXISTING:",
+      "♻️ UPDATING EXISTING USER:",
       existing.id
     );
 
-    const update =
-      await zohoRequest(
-        `/${existing.module}/${existing.id}`,
-        {
-          method: "PUT",
-          body: {
-            data: [payload],
-          },
-        }
-      );
+    const update = await zohoRequest(
+      `/${existing.module}/${existing.id}`,
+      {
+        method: "PUT",
+        body: {
+          data: [payload],
+        },
+      }
+    );
 
     if (
       update.ok &&
       update.data?.data
     ) {
 
-      console.log("✅ UPDATED IN ZOHO");
+      console.log("✅ UPDATED SUCCESSFULLY");
 
       return {
         ok: true,
@@ -1265,20 +1294,28 @@ async function createOrUpdateZohoRecord(userDoc) {
      CREATE LEAD
   ====================================================== */
 
-  console.log("🆕 CREATING LEAD");
+  console.log("🆕 CREATING NEW LEAD");
 
-  let create =
-    await zohoRequest("/Leads", {
+  let create = await zohoRequest(
+    "/Leads",
+    {
       method: "POST",
       body: {
         data: [payload],
       },
-    });
+    }
+  );
 
   console.log(
-    "🆕 CREATE RESPONSE:",
+    "🆕 LEAD RESPONSE:",
     JSON.stringify(create, null, 2)
   );
+
+  let finalModule = "Leads";
+
+  /* ======================================================
+     FALLBACK CONTACTS
+  ====================================================== */
 
   if (
     !create.ok ||
@@ -1289,13 +1326,17 @@ async function createOrUpdateZohoRecord(userDoc) {
       "⚠️ FAILED IN LEADS, TRYING CONTACTS"
     );
 
-    create =
-      await zohoRequest("/Contacts", {
+    create = await zohoRequest(
+      "/Contacts",
+      {
         method: "POST",
         body: {
           data: [payload],
         },
-      });
+      }
+    );
+
+    finalModule = "Contacts";
   }
 
   if (
@@ -1331,12 +1372,15 @@ async function createOrUpdateZohoRecord(userDoc) {
   return {
     ok: true,
     action: "created",
-    module: "Leads",
+    module: finalModule,
     zohoId,
     data: create.data,
   };
 }
 
+/* ======================================================
+   SYNC USER
+====================================================== */
 async function syncUserToZohoAndMark(userDoc) {
 
   if (!userDoc) {
@@ -1354,7 +1398,7 @@ async function syncUserToZohoAndMark(userDoc) {
       await createOrUpdateZohoRecord(userDoc);
 
     console.log(
-      "📡 FINAL ZOHO RESULT:",
+      "📡 FINAL RESULT:",
       JSON.stringify(zoho, null, 2)
     );
 
@@ -1426,7 +1470,6 @@ async function syncUserToZohoAndMark(userDoc) {
     };
   }
 }
-
 
 
 
