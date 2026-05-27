@@ -933,13 +933,6 @@ let zohoAccessTokenExpiresAt = 0;
 let zohoSyncLock = false;
 const zohoQueue = new Set();
 
-function zohoFetch(url, options = {}) {
-  if (typeof globalThis.fetch !== "function") {
-    throw new Error("fetch no disponible en este entorno");
-  }
-  return globalThis.fetch(url, options);
-}
-
 function zohoReady() {
   return !!(
     process.env.ZOHO_ENABLED !== "false" &&
@@ -953,48 +946,72 @@ async function getZohoAccessToken() {
   if (!zohoReady()) return null;
 
   const now = Date.now();
-  if (zohoAccessTokenCache && now < zohoAccessTokenExpiresAt - 30000) {
+
+  if (
+    zohoAccessTokenCache &&
+    now < zohoAccessTokenExpiresAt - 30000
+  ) {
     return zohoAccessTokenCache;
   }
 
-  const baseAccountsUrl = (process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "");
   const url =
-    `${baseAccountsUrl}/oauth/v2/token?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}` +
+    `${(process.env.ZOHO_ACCOUNTS_URL || "https://accounts.zoho.com").replace(/\/+$/, "")}` +
+    `/oauth/v2/token?refresh_token=${encodeURIComponent(process.env.ZOHO_REFRESH_TOKEN)}` +
     `&client_id=${encodeURIComponent(process.env.ZOHO_CLIENT_ID)}` +
     `&client_secret=${encodeURIComponent(process.env.ZOHO_CLIENT_SECRET)}` +
     `&grant_type=refresh_token`;
 
-  const response = await zohoFetch(url, { method: "POST" });
+  const response = await fetchFn(url, {
+    method: "POST",
+  });
+
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok || !data?.access_token) {
     throw new Error(
-      `Zoho token error: ${data?.error || data?.error_description || response.statusText}`
+      `Zoho token error: ${
+        data?.error ||
+        data?.error_description ||
+        response.statusText
+      }`
     );
   }
 
   zohoAccessTokenCache = data.access_token;
-  zohoAccessTokenExpiresAt = Date.now() + Number(data.expires_in || 3600) * 1000;
+
+  zohoAccessTokenExpiresAt =
+    Date.now() +
+    Number(data.expires_in || 3600) * 1000;
 
   return zohoAccessTokenCache;
 }
 
-async function zohoRequest(pathname, options = {}) {
+async function zohoRequest(path, options = {}) {
   const token = await getZohoAccessToken();
-  if (!token) throw new Error("Zoho no configurado");
 
-  const baseApiUrl = (process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "");
-  const res = await zohoFetch(`${baseApiUrl}/crm/v8${pathname}`, {
-    method: options.method || "GET",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  if (!token) {
+    throw new Error("Zoho no configurado");
+  }
+
+  const res = await fetchFn(
+    `${(process.env.ZOHO_API_BASE_URL || "https://www.zohoapis.com").replace(/\/+$/, "")}/crm/v8${path}`,
+    {
+      method: options.method || "GET",
+
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+
+      body: options.body
+        ? JSON.stringify(options.body)
+        : undefined,
+    }
+  );
 
   const text = await res.text();
+
   let data = {};
 
   try {
@@ -1003,9 +1020,12 @@ async function zohoRequest(pathname, options = {}) {
     data = { raw: text };
   }
 
-  return { ok: res.ok, status: res.status, data };
+  return {
+    ok: res.ok,
+    status: res.status,
+    data,
+  };
 }
-
 function buildZohoPayload(userDoc) {
   const fullName =
     String(
