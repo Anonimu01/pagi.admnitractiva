@@ -1131,6 +1131,8 @@ async function syncUserToZohoAndMark(userDoc) {
 
   try {
     const zoho = await createOrUpdateZohoRecord(userDoc);
+     
+     console.log("ZOHO RESULT:", JSON.stringify(zoho, null, 2));
 
     if (zoho?.ok) {
       userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
