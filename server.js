@@ -933,7 +933,10 @@ let zohoAccessTokenExpiresAt = 0;
 let zohoSyncLock = false;
 const zohoQueue = new Set();
 
-const httpFetch = globalThis.fetch;
+const httpFetch =
+  typeof globalThis.fetch === "function"
+    ? globalThis.fetch.bind(globalThis)
+    : null;
 
 function zohoReady() {
   return !!(
@@ -1013,30 +1016,89 @@ async function zohoRequest(path, options = {}) {
   };
 }
 
-function buildZohoPayload(userDoc) {
+function getUserFullName(userDoc = {}) {
   const fullName = String(
     userDoc.fullName ||
+      userDoc.name ||
+      userDoc.Nombre ||
       [userDoc.firstName, userDoc.lastName].filter(Boolean).join(" ") ||
       userDoc.email ||
+      userDoc["Correo electrónico"] ||
       "Cliente"
   ).trim();
 
-  const firstName = String(userDoc.firstName || "").trim();
-  const lastName = String(userDoc.lastName || fullName || "Cliente").trim();
-  const address = String(userDoc.address || "").trim();
-  const phone = String(userDoc.phone || "").trim();
-  const email = String(userDoc.email || "").trim().toLowerCase();
+  return fullName;
+}
+
+function getUserEmail(userDoc = {}) {
+  return String(
+    userDoc.email ||
+      userDoc["Correo electrónico"] ||
+      ""
+  ).trim().toLowerCase();
+}
+
+function getUserPhone(userDoc = {}) {
+  return String(
+    userDoc.phone ||
+      userDoc.teléfono ||
+      userDoc.telefono ||
+      ""
+  ).trim();
+}
+
+function getUserAddress(userDoc = {}) {
+  return String(
+    userDoc.address ||
+      userDoc.Dirección ||
+      userDoc.direccion ||
+      ""
+  ).trim();
+}
+
+function buildZohoPayload(userDoc, moduleName = "Leads") {
+  const fullName = getUserFullName(userDoc);
+  const email = getUserEmail(userDoc);
+  const phone = getUserPhone(userDoc);
+  const address = getUserAddress(userDoc);
+
+  const nameParts = fullName.split(/\s+/).filter(Boolean);
+  const firstName = String(
+    userDoc.firstName ||
+      userDoc.nombre ||
+      nameParts[0] ||
+      "Cliente"
+  ).trim();
+
+  const lastName = String(
+    userDoc.lastName ||
+      userDoc.apellido ||
+      nameParts.slice(1).join(" ") ||
+      "Cliente"
+  ).trim();
+
+  const base = {
+    First_Name: firstName,
+    Last_Name: lastName || "Cliente",
+    Email: email || undefined,
+    Phone: phone || undefined,
+  };
+
+  if (moduleName === "Contacts") {
+    return {
+      ...base,
+      Mailing_Street: address || undefined,
+      Description: `Sincronizado desde plataforma. Balance: ${Number(userDoc.balance ?? userDoc.Equilibrio ?? 0) || 0}.`,
+    };
+  }
 
   return {
-    [process.env.ZOHO_FIRST_NAME_FIELD || "First_Name"]: firstName || "Cliente",
-    [process.env.ZOHO_LAST_NAME_FIELD || "Last_Name"]: lastName || fullName || "Cliente",
-    [process.env.ZOHO_EMAIL_FIELD || "Email"]: email || undefined,
-    [process.env.ZOHO_PHONE_FIELD || "Phone"]: phone || undefined,
-    [process.env.ZOHO_ADDRESS_FIELD || "Street"]: address || undefined,
-    [process.env.ZOHO_COMPANY_FIELD || "Company"]: "Leones Broker",
+    ...base,
+    Street: address || undefined,
+    Company: "Leones Broker",
     Lead_Source: "Leones Broker",
     Lead_Status: "Nuevo",
-    Description: `Sincronizado desde plataforma. Balance: ${userDoc.balance ?? 0}, Leverage: ${userDoc.leverage ?? 1}.`,
+    Description: `Sincronizado desde plataforma. Balance: ${Number(userDoc.balance ?? userDoc.Equilibrio ?? 0) || 0}, Leverage: ${Number(userDoc.leverage ?? userDoc.leverageFactor ?? 1) || 1}.`,
   };
 }
 
@@ -1044,10 +1106,11 @@ async function getExistingZohoIdForUser(userDoc) {
   if (userDoc?.zohoLeadId) return { module: "Leads", id: userDoc.zohoLeadId };
   if (userDoc?.zohoContactId) return { module: "Contacts", id: userDoc.zohoContactId };
 
-  if (!userDoc?.email) return null;
+  const email = getUserEmail(userDoc);
+  if (!email) return null;
 
   try {
-    const crit = encodeURIComponent(`(Email:equals:${userDoc.email})`);
+    const crit = encodeURIComponent(`(Email:equals:${email})`);
 
     const lead = await zohoRequest(`/Leads/search?criteria=${crit}`);
     const leadId = lead?.data?.data?.[0]?.id;
@@ -1068,16 +1131,17 @@ async function createOrUpdateZohoRecord(userDoc) {
     return { ok: false, skipped: true, reason: "zoho_not_configured" };
   }
 
-  const payload = buildZohoPayload(userDoc);
   const existing = await getExistingZohoIdForUser(userDoc);
 
   // =========================
   // UPDATE
   // =========================
   if (existing?.id) {
+    const updatePayload = buildZohoPayload(userDoc, existing.module);
+
     const update = await zohoRequest(`/${existing.module}/${existing.id}`, {
       method: "PUT",
-      body: { data: [payload] },
+      body: { data: [updatePayload] },
     });
 
     if (update.ok && update.data?.data) {
@@ -1089,24 +1153,28 @@ async function createOrUpdateZohoRecord(userDoc) {
         data: update.data,
       };
     }
+
+    throw new Error(JSON.stringify(update.data || "Zoho update failed"));
   }
 
   // =========================
   // CREATE
   // =========================
   let moduleToUse = process.env.ZOHO_MODULE || "Leads";
+  let createPayload = buildZohoPayload(userDoc, moduleToUse);
 
   let create = await zohoRequest(`/${moduleToUse}`, {
     method: "POST",
-    body: { data: [payload] },
+    body: { data: [createPayload] },
   });
 
   if (!create.ok || !create.data?.data?.length) {
     moduleToUse = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
+    createPayload = buildZohoPayload(userDoc, moduleToUse);
 
     create = await zohoRequest(`/${moduleToUse}`, {
       method: "POST",
-      body: { data: [payload] },
+      body: { data: [createPayload] },
     });
   }
 
@@ -1131,8 +1199,8 @@ async function syncUserToZohoAndMark(userDoc) {
 
   try {
     const zoho = await createOrUpdateZohoRecord(userDoc);
-     
-     console.log("ZOHO RESULT:", JSON.stringify(zoho, null, 2));
+
+    console.log("ZOHO RESULT:", JSON.stringify(zoho, null, 2));
 
     if (zoho?.ok) {
       userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
@@ -1214,83 +1282,45 @@ async function fetchCoreUsersOnce() {
 async function syncCoreUsersToLocalAndZoho() {
   if (zohoSyncLock) {
     console.log("⚠️ ZOHO SYNC LOCKED");
-
-    return {
-      ok: false,
-      skipped: true,
-      reason: "sync_locked",
-    };
+    return { ok: false, skipped: true, reason: "sync_locked" };
   }
 
   zohoSyncLock = true;
 
   try {
-
     console.log("🚀 STARTING CORE -> LOCAL -> ZOHO SYNC");
 
     const coreUsers = await fetchCoreUsersOnce();
 
-    console.log(
-      "📦 CORE USERS:",
-      Array.isArray(coreUsers) ? coreUsers.length : 0
-    );
+    console.log("📦 CORE USERS:", Array.isArray(coreUsers) ? coreUsers.length : 0);
 
     if (!Array.isArray(coreUsers) || coreUsers.length === 0) {
-
       console.log("⚠️ NO USERS RECEIVED FROM CORE");
-
-      return {
-        ok: true,
-        synced: 0,
-        created: 0,
-        updated: 0,
-        zoho: 0,
-      };
+      return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
     }
 
     let created = 0;
     let updated = 0;
     let zohoCount = 0;
-
     const errors = [];
 
     for (const raw of coreUsers) {
-
-      console.log(
-        "👤 CORE USER:",
-        raw?.email || raw?.username || raw?._id || raw?.id
-      );
+      console.log("👤 CORE USER:", raw?.email || raw?.name || raw?.username || raw?._id || raw?.id);
 
       const before = await User.findOne(
         raw?.email
-          ? {
-              email: String(raw.email)
-                .trim()
-                .toLowerCase(),
-            }
+          ? { email: String(raw.email).trim().toLowerCase() }
           : raw?.id || raw?._id
-            ? {
-                sourceId: String(
-                  raw.id || raw._id
-                ),
-              }
+            ? { sourceId: String(raw.id || raw._id) }
             : null
       ).catch((err) => {
-
-        console.error(
-          "❌ BEFORE USER SEARCH ERROR:",
-          err?.message || err
-        );
-
+        console.error("❌ BEFORE USER SEARCH ERROR:", err?.message || err);
         return null;
       });
 
       const doc = await upsertLocalUserFromCore(raw);
 
-      console.log(
-        "📥 LOCAL USER:",
-        doc?.email || "NO DOC"
-      );
+      console.log("📥 LOCAL USER:", doc?.email || doc?.name || "NO DOC");
 
       if (!doc) {
         console.log("⚠️ USER NOT UPSERTED");
@@ -1306,50 +1336,28 @@ async function syncCoreUsersToLocalAndZoho() {
       }
 
       try {
-
-        console.log(
-          "📡 SENDING USER TO ZOHO:",
-          doc.email
-        );
+        console.log("📡 SENDING USER TO ZOHO:", doc.email || doc.name);
 
         const z = await syncUserToZohoAndMark(doc);
 
-        console.log(
-          "🟢 ZOHO RESPONSE:",
-          JSON.stringify(z, null, 2)
-        );
+        console.log("🟢 ZOHO RESPONSE:", JSON.stringify(z, null, 2));
 
         if (z?.ok) {
           zohoCount += 1;
-
-          console.log(
-            "✅ USER SYNCED TO ZOHO:",
-            doc.email
-          );
+          console.log("✅ USER SYNCED TO ZOHO:", doc.email || doc.name);
         }
 
         if (z?.error) {
-
-          console.error(
-            "❌ ZOHO ERROR:",
-            z.error
-          );
-
+          console.error("❌ ZOHO ERROR:", z.error);
           errors.push({
-            email: doc.email,
+            email: doc.email || doc.name || "",
             error: z.error,
           });
         }
-
       } catch (zohoErr) {
-
-        console.error(
-          "❌ ZOHO SYNC CRASH:",
-          zohoErr?.message || zohoErr
-        );
-
+        console.error("❌ ZOHO SYNC CRASH:", zohoErr?.message || zohoErr);
         errors.push({
-          email: doc.email,
+          email: doc.email || doc.name || "",
           error: zohoErr?.message || String(zohoErr),
         });
       }
@@ -1371,26 +1379,18 @@ async function syncCoreUsersToLocalAndZoho() {
       zoho: zohoCount,
       errors,
     };
-
   } catch (err) {
-
-    console.error(
-      "❌ syncCoreUsersToLocalAndZoho ERROR:",
-      err?.message || err
-    );
-
+    console.error("❌ syncCoreUsersToLocalAndZoho ERROR:", err?.message || err);
     return {
       ok: false,
       error: err?.message || String(err),
     };
-
   } finally {
-
     zohoSyncLock = false;
-
     console.log("🔓 ZOHO SYNC UNLOCKED");
   }
 }
+
 async function syncSingleUserToZohoById(userId) {
   const doc = await User.findById(userId).catch(() => null);
   if (!doc) return { ok: false, msg: "Usuario no encontrado" };
