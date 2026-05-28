@@ -2880,6 +2880,8 @@ app.post(
         country,
       } = req.body || {};
 
+       await syncUserToZohoAndMark(user);
+
       const cleanEmail = String(email || "")
         .trim()
         .toLowerCase();
@@ -2890,6 +2892,12 @@ app.post(
           msg: "Email y password requeridos",
         });
       }
+
+       try {
+  await syncUserToZohoAndMark(user);
+} catch (err) {
+  console.error("ZOHO AUTO SYNC ERROR:", err.message);
+}
 
       /* =========================
          CHECK EXISTING USER
