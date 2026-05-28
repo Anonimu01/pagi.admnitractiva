@@ -2367,6 +2367,70 @@ app.get("/api/admin/users", ensureAdminAuth, async (_req, res) => {
   }
 });
 
+app.post("/admin/force-zoho-sync", async (req, res) => {
+  try {
+
+    console.log("🚀 FORCE ZOHO SYNC START");
+
+    const users = await User.find({});
+
+    console.log("👥 USERS FOUND:", users.length);
+
+    let synced = 0;
+    let failed = 0;
+
+    for (const user of users) {
+
+      try {
+
+        console.log(
+          "🔄 SYNCING:",
+          user.email
+        );
+
+        const result =
+          await syncUserToZohoAndMark(user);
+
+        console.log(
+          "✅ ZOHO RESULT:",
+          JSON.stringify(result, null, 2)
+        );
+
+        synced++;
+
+      } catch (err) {
+
+        failed++;
+
+        console.error(
+          "❌ ZOHO USER ERROR:",
+          user.email,
+          err.message
+        );
+      }
+    }
+
+    return res.json({
+      ok: true,
+      total: users.length,
+      synced,
+      failed,
+    });
+
+  } catch (err) {
+
+    console.error(
+      "❌ FORCE ZOHO SYNC ERROR:",
+      err
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error: err.message,
+    });
+  }
+});
+
 app.post("/api/admin/users/:id/sync-zoho", ensureAdminAuth, async (req, res) => {
   try {
     const user = await User.findById(req.params.id).catch(() => null);
