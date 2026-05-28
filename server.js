@@ -1140,6 +1140,10 @@ function buildZohoPayload(
     Last_Name: lastName,
     Email: email || undefined,
     Phone: phone || undefined,
+
+     ID_de_Skype:
+  userDoc.skypeId ||
+  Date.now().toString().slice(-9),
   };
 
   if (moduleName === "Contacts") {
