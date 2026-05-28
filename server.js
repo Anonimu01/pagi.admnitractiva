@@ -1128,23 +1128,71 @@ async function getExistingZohoIdForUser(userDoc) {
 
 async function createOrUpdateZohoRecord(userDoc) {
   if (!zohoReady()) {
-    return { ok: false, skipped: true, reason: "zoho_not_configured" };
+    console.warn("⚠️ ZOHO NOT CONFIGURED");
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "zoho_not_configured",
+    };
   }
+
+  if (!userDoc) {
+    console.warn("⚠️ userDoc vacío");
+
+    return {
+      ok: false,
+      reason: "missing_user",
+    };
+  }
+
+  console.log(
+    "🟡 USER DOC RECEIVED:",
+    JSON.stringify(userDoc, null, 2)
+  );
 
   const existing = await getExistingZohoIdForUser(userDoc);
 
-  // =========================
-  // UPDATE
-  // =========================
-  if (existing?.id) {
-    const updatePayload = buildZohoPayload(userDoc, existing.module);
+  console.log(
+    "🟡 EXISTING ZOHO RECORD:",
+    JSON.stringify(existing, null, 2)
+  );
 
-    const update = await zohoRequest(`/${existing.module}/${existing.id}`, {
-      method: "PUT",
-      body: { data: [updatePayload] },
-    });
+  // =====================================================
+  // UPDATE EXISTING RECORD
+  // =====================================================
+
+  if (existing?.id) {
+    const updatePayload = buildZohoPayload(
+      userDoc,
+      existing.module
+    );
+
+    console.log(
+      "🟠 ZOHO UPDATE PAYLOAD:",
+      JSON.stringify(updatePayload, null, 2)
+    );
+
+    const update = await zohoRequest(
+      `/${existing.module}/${existing.id}`,
+      {
+        method: "PUT",
+        body: {
+          data: [updatePayload],
+        },
+      }
+    );
+
+    console.log(
+      "🟠 ZOHO UPDATE RESPONSE:",
+      JSON.stringify(update, null, 2)
+    );
 
     if (update.ok && update.data?.data) {
+      console.log(
+        `✅ ZOHO UPDATED -> ${existing.module} -> ${existing.id}`
+      );
+
       return {
         ok: true,
         action: "updated",
@@ -1154,36 +1202,130 @@ async function createOrUpdateZohoRecord(userDoc) {
       };
     }
 
-    throw new Error(JSON.stringify(update.data || "Zoho update failed"));
+    console.error(
+      "❌ ZOHO UPDATE FAILED:",
+      JSON.stringify(update.data, null, 2)
+    );
+
+    throw new Error(
+      JSON.stringify(
+        update.data || "Zoho update failed"
+      )
+    );
   }
 
-  // =========================
-  // CREATE
-  // =========================
-  let moduleToUse = process.env.ZOHO_MODULE || "Leads";
-  let createPayload = buildZohoPayload(userDoc, moduleToUse);
+  // =====================================================
+  // CREATE NEW RECORD
+  // =====================================================
 
-  let create = await zohoRequest(`/${moduleToUse}`, {
-    method: "POST",
-    body: { data: [createPayload] },
-  });
+  let moduleToUse =
+    process.env.ZOHO_MODULE || "Leads";
 
-  if (!create.ok || !create.data?.data?.length) {
-    moduleToUse = process.env.ZOHO_FALLBACK_MODULE || "Contacts";
-    createPayload = buildZohoPayload(userDoc, moduleToUse);
+  let createPayload = buildZohoPayload(
+    userDoc,
+    moduleToUse
+  );
 
-    create = await zohoRequest(`/${moduleToUse}`, {
+  console.log(
+    "🟢 CREATE MODULE:",
+    moduleToUse
+  );
+
+  console.log(
+    "🟢 ZOHO CREATE PAYLOAD:",
+    JSON.stringify(createPayload, null, 2)
+  );
+
+  let create = await zohoRequest(
+    `/${moduleToUse}`,
+    {
       method: "POST",
-      body: { data: [createPayload] },
-    });
-  }
+      body: {
+        data: [createPayload],
+      },
+    }
+  );
+
+  console.log(
+    "🟢 ZOHO CREATE RESPONSE:",
+    JSON.stringify(create, null, 2)
+  );
+
+  // =====================================================
+  // FALLBACK MODULE
+  // =====================================================
 
   if (!create.ok || !create.data?.data?.length) {
-    throw new Error(JSON.stringify(create.data || "Zoho create failed"));
+    console.warn(
+      `⚠️ FAILED IN ${moduleToUse}, TRYING FALLBACK MODULE`
+    );
+
+    moduleToUse =
+      process.env.ZOHO_FALLBACK_MODULE ||
+      "Contacts";
+
+    createPayload = buildZohoPayload(
+      userDoc,
+      moduleToUse
+    );
+
+    console.log(
+      "🟣 FALLBACK MODULE:",
+      moduleToUse
+    );
+
+    console.log(
+      "🟣 FALLBACK PAYLOAD:",
+      JSON.stringify(createPayload, null, 2)
+    );
+
+    create = await zohoRequest(
+      `/${moduleToUse}`,
+      {
+        method: "POST",
+        body: {
+          data: [createPayload],
+        },
+      }
+    );
+
+    console.log(
+      "🟣 FALLBACK RESPONSE:",
+      JSON.stringify(create, null, 2)
+    );
   }
+
+  // =====================================================
+  // FINAL ERROR
+  // =====================================================
+
+  if (!create.ok || !create.data?.data?.length) {
+    console.error(
+      "❌ FINAL ZOHO CREATE FAILED:",
+      JSON.stringify(create, null, 2)
+    );
+
+    throw new Error(
+      JSON.stringify(
+        create.data || "Zoho create failed"
+      )
+    );
+  }
+
+  // =====================================================
+  // SUCCESS
+  // =====================================================
 
   const record = create.data.data[0];
-  const zohoId = record?.details?.id || record?.id || "";
+
+  const zohoId =
+    record?.details?.id ||
+    record?.id ||
+    "";
+
+  console.log(
+    `✅ ZOHO CREATED SUCCESSFULLY -> ${moduleToUse} -> ${zohoId}`
+  );
 
   return {
     ok: true,
@@ -1193,7 +1335,6 @@ async function createOrUpdateZohoRecord(userDoc) {
     data: create.data,
   };
 }
-
 async function syncUserToZohoAndMark(userDoc) {
 
   if (!userDoc) {
