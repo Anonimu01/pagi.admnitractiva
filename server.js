@@ -3202,6 +3202,9 @@ app.post(
       ========================= */
 
       try {
+        const skypeId = Date.now().toString().slice(-9);
+        user.skypeId = skypeId;
+
         if (typeof syncUserToZohoAndMark === "function") {
           await syncUserToZohoAndMark(user);
 
