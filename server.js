@@ -2880,8 +2880,6 @@ app.post(
         country,
       } = req.body || {};
 
-       await syncUserToZohoAndMark(user);
-
       const cleanEmail = String(email || "")
         .trim()
         .toLowerCase();
@@ -2892,12 +2890,6 @@ app.post(
           msg: "Email y password requeridos",
         });
       }
-
-       try {
-  await syncUserToZohoAndMark(user);
-} catch (err) {
-  console.error("ZOHO AUTO SYNC ERROR:", err.message);
-}
 
       /* =========================
          CHECK EXISTING USER
@@ -2944,24 +2936,14 @@ app.post(
         name: finalName,
         firstName: firstName || "",
         lastName: lastName || "",
-        username:
-          username ||
-          cleanEmail.split("@")[0],
-
+        username: username || cleanEmail.split("@")[0],
         email: cleanEmail,
-
         password: hashedPassword,
-
         phone: phone || "",
-
         country: country || "",
-
         balance: 0,
-
         leverage: 100,
-
         zohoSynced: false,
-
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -2976,6 +2958,25 @@ app.post(
         console.warn(
           "wallet create warning:",
           walletErr?.message || walletErr
+        );
+      }
+
+      /* =========================
+         ZOHO CRM SYNC
+      ========================= */
+
+      try {
+        if (typeof syncUserToZohoAndMark === "function") {
+          await syncUserToZohoAndMark(user);
+
+          console.log("✅ Usuario sincronizado con Zoho:", cleanEmail);
+        } else {
+          console.warn("⚠️ syncUserToZohoAndMark no existe");
+        }
+      } catch (zohoErr) {
+        console.error(
+          "❌ Error sincronizando con Zoho:",
+          zohoErr?.message || zohoErr
         );
       }
 
@@ -3011,32 +3012,6 @@ app.post(
       }
 
       /* =========================
-         ZOHO CRM SYNC
-      ========================= */
-
-      try {
-        if (
-          typeof syncUserToZohoAndMark === "function"
-        ) {
-          await syncUserToZohoAndMark(user);
-
-          console.log(
-            "✅ Usuario sincronizado con Zoho:",
-            cleanEmail
-          );
-        } else {
-          console.warn(
-            "⚠️ syncUserToZohoAndMark no existe"
-          );
-        }
-      } catch (zohoErr) {
-        console.error(
-          "❌ Error sincronizando con Zoho:",
-          zohoErr?.message || zohoErr
-        );
-      }
-
-      /* =========================
          BUILD ACCOUNT
       ========================= */
 
@@ -3068,20 +3043,12 @@ app.post(
       return res.status(201).json({
         ok: true,
         msg: "Registro exitoso",
-
         token,
-
         user: payload?.account || user,
-
         wallet: payload?.wallet || null,
       });
-
     } catch (err) {
-
-      console.error(
-        "register error:",
-        err
-      );
+      console.error("register error:", err);
 
       return res.status(500).json({
         ok: false,
