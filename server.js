@@ -1195,21 +1195,51 @@ async function createOrUpdateZohoRecord(userDoc) {
 }
 
 async function syncUserToZohoAndMark(userDoc) {
-  if (!userDoc) return null;
+
+  if (!userDoc) {
+    console.warn("⚠️ syncUserToZohoAndMark recibió userDoc vacío");
+    return null;
+  }
 
   try {
-    const zoho = await createOrUpdateZohoRecord(userDoc);
 
-    console.log("ZOHO RESULT:", JSON.stringify(zoho, null, 2));
+    console.log("🚀 STARTING ZOHO SYNC");
+
+    console.log("📤 USER DATA TO ZOHO:", {
+      id: userDoc._id,
+      name: userDoc.name,
+      email: userDoc.email,
+      phone: userDoc.phone,
+      address: userDoc.address,
+      country: userDoc.country,
+    });
+
+    const zoho =
+      await createOrUpdateZohoRecord(userDoc);
+
+    console.log(
+      "✅ ZOHO RESULT:",
+      JSON.stringify(zoho, null, 2)
+    );
 
     if (zoho?.ok) {
-      userDoc.zohoModule = zoho.module || userDoc.zohoModule || "";
 
-      if (zoho.module === "Leads" && zoho.zohoId) {
+      userDoc.zohoModule =
+        zoho.module ||
+        userDoc.zohoModule ||
+        "";
+
+      if (
+        zoho.module === "Leads" &&
+        zoho.zohoId
+      ) {
         userDoc.zohoLeadId = zoho.zohoId;
       }
 
-      if (zoho.module === "Contacts" && zoho.zohoId) {
+      if (
+        zoho.module === "Contacts" &&
+        zoho.zohoId
+      ) {
         userDoc.zohoContactId = zoho.zohoId;
       }
 
@@ -1218,22 +1248,60 @@ async function syncUserToZohoAndMark(userDoc) {
       userDoc.zohoSyncedAt = new Date();
       userDoc.updatedAt = new Date();
 
+      await userDoc.save().catch((saveErr) => {
+        console.error(
+          "❌ ERROR SAVING USER AFTER ZOHO:",
+          saveErr
+        );
+      });
+
+      console.log(
+        "✅ USER MARKED AS ZOHO SYNCED:",
+        userDoc.email
+      );
+
+    } else {
+
+      console.error(
+        "❌ ZOHO RESPONSE NOT OK:",
+        zoho
+      );
+
+      userDoc.zohoSyncStatus = "error";
+      userDoc.zohoLastError =
+        zoho?.error ||
+        "Unknown Zoho error";
+
+      userDoc.zohoSyncedAt = new Date();
+      userDoc.updatedAt = new Date();
+
       await userDoc.save().catch(() => null);
     }
 
     return zoho;
+
   } catch (err) {
+
+    console.error(
+      "❌ FULL ZOHO SYNC ERROR:",
+      err
+    );
+
     userDoc.zohoSyncStatus = "error";
-    userDoc.zohoLastError = err?.message || String(err);
+    userDoc.zohoLastError =
+      err?.message || String(err);
+
     userDoc.zohoSyncedAt = new Date();
     userDoc.updatedAt = new Date();
 
     await userDoc.save().catch(() => null);
 
-    return { ok: false, error: err?.message || String(err) };
+    return {
+      ok: false,
+      error: err?.message || String(err),
+    };
   }
 }
-
 async function fetchCoreUsersOnce() {
   if (!CORE_API_URL) return [];
   if (typeof httpFetch !== "function") {
