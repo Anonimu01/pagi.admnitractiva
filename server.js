@@ -13,7 +13,9 @@ const jwt = require("jsonwebtoken");
 
 const connectDB = require("./config/db");
 const cookieParser = require("cookie-parser");
+const User = require("./models/User");
 const fetchFn = global.fetch;
+
 
 
 /* ======================================================
@@ -1488,117 +1490,151 @@ async function fetchCoreUsersOnce() {
   return [];
 }
 
-async function syncCoreUsersToLocalAndZoho() {
+```js
+async function syncMongoUsersToZoho() {
   if (zohoSyncLock) {
     console.log("⚠️ ZOHO SYNC LOCKED");
-    return { ok: false, skipped: true, reason: "sync_locked" };
+
+    return {
+      ok: false,
+      skipped: true,
+      reason: "sync_locked",
+    };
   }
 
   zohoSyncLock = true;
 
   try {
-    console.log("🚀 STARTING CORE -> LOCAL -> ZOHO SYNC");
+    console.log("🚀 STARTING MONGODB -> ZOHO SYNC");
 
-    const coreUsers = await fetchCoreUsersOnce();
+    // =========================
+    // LEER USUARIOS DIRECTO DE MONGO
+    // =========================
+    const mongoUsers = await User.find({});
 
-    console.log("📦 CORE USERS:", Array.isArray(coreUsers) ? coreUsers.length : 0);
+    console.log(
+      "📦 MONGO USERS:",
+      Array.isArray(mongoUsers) ? mongoUsers.length : 0
+    );
 
-    if (!Array.isArray(coreUsers) || coreUsers.length === 0) {
-      console.log("⚠️ NO USERS RECEIVED FROM CORE");
-      return { ok: true, synced: 0, created: 0, updated: 0, zoho: 0 };
+    if (!Array.isArray(mongoUsers) || mongoUsers.length === 0) {
+      console.log("⚠️ NO USERS FOUND IN MONGODB");
+
+      return {
+        ok: true,
+        synced: 0,
+        zoho: 0,
+      };
     }
 
-    let created = 0;
-    let updated = 0;
+    let synced = 0;
     let zohoCount = 0;
     const errors = [];
 
-    for (const raw of coreUsers) {
-      console.log("👤 CORE USER:", raw?.email || raw?.name || raw?.username || raw?._id || raw?.id);
-
-      const before = await User.findOne(
-        raw?.email
-          ? { email: String(raw.email).trim().toLowerCase() }
-          : raw?.id || raw?._id
-            ? { sourceId: String(raw.id || raw._id) }
-            : null
-      ).catch((err) => {
-        console.error("❌ BEFORE USER SEARCH ERROR:", err?.message || err);
-        return null;
-      });
-
-      const doc = await upsertLocalUserFromCore(raw);
-
-      console.log("📥 LOCAL USER:", doc?.email || doc?.name || "NO DOC");
-
-      if (!doc) {
-        console.log("⚠️ USER NOT UPSERTED");
-        continue;
-      }
-
-      if (!before) {
-        created += 1;
-        console.log("✅ USER CREATED LOCALLY");
-      } else {
-        updated += 1;
-        console.log("♻️ USER UPDATED LOCALLY");
-      }
-
+    // =========================
+    // RECORRER USUARIOS
+    // =========================
+    for (const doc of mongoUsers) {
       try {
-        console.log("📡 SENDING USER TO ZOHO:", doc.email || doc.name);
+        console.log(
+          "👤 MONGO USER:",
+          doc?.email ||
+          doc?.name ||
+          doc?.username ||
+          doc?._id
+        );
+
+        if (!doc) {
+          console.log("⚠️ INVALID USER DOC");
+          continue;
+        }
+
+        // =========================
+        // ENVIAR A ZOHO
+        // =========================
+        console.log(
+          "📡 SENDING USER TO ZOHO:",
+          doc.email || doc.name
+        );
 
         const z = await syncUserToZohoAndMark(doc);
 
-        console.log("🟢 ZOHO RESPONSE:", JSON.stringify(z, null, 2));
+        console.log(
+          "🟢 ZOHO RESPONSE:",
+          JSON.stringify(z, null, 2)
+        );
+
+        synced++;
 
         if (z?.ok) {
-          zohoCount += 1;
-          console.log("✅ USER SYNCED TO ZOHO:", doc.email || doc.name);
+          zohoCount++;
+
+          console.log(
+            "✅ USER SYNCED TO ZOHO:",
+            doc.email || doc.name
+          );
         }
 
         if (z?.error) {
-          console.error("❌ ZOHO ERROR:", z.error);
+          console.error(
+            "❌ ZOHO ERROR:",
+            z.error
+          );
+
           errors.push({
             email: doc.email || doc.name || "",
             error: z.error,
           });
         }
+
       } catch (zohoErr) {
-        console.error("❌ ZOHO SYNC CRASH:", zohoErr?.message || zohoErr);
+        console.error(
+          "❌ USER SYNC CRASH:",
+          zohoErr?.message || zohoErr
+        );
+
         errors.push({
-          email: doc.email || doc.name || "",
+          email: doc?.email || doc?.name || "",
           error: zohoErr?.message || String(zohoErr),
         });
       }
     }
 
-    console.log("✅ FINAL SYNC RESULT:", {
-      synced: coreUsers.length,
-      created,
-      updated,
+    // =========================
+    // RESULTADO FINAL
+    // =========================
+    console.log("✅ FINAL MONGODB -> ZOHO RESULT:", {
+      synced,
       zoho: zohoCount,
       errors,
     });
 
     return {
       ok: true,
-      synced: coreUsers.length,
-      created,
-      updated,
+      synced,
       zoho: zohoCount,
       errors,
     };
+
   } catch (err) {
-    console.error("❌ syncCoreUsersToLocalAndZoho ERROR:", err?.message || err);
+    console.error(
+      "❌ syncMongoUsersToZoho ERROR:",
+      err?.message || err
+    );
+
     return {
       ok: false,
       error: err?.message || String(err),
     };
+
   } finally {
     zohoSyncLock = false;
+
     console.log("🔓 ZOHO SYNC UNLOCKED");
   }
 }
+```
+
 
 async function syncSingleUserToZohoById(userId) {
   const doc = await User.findById(userId).catch(() => null);
