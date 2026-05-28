@@ -1490,8 +1490,8 @@ async function fetchCoreUsersOnce() {
   return [];
 }
 
-```js
 async function syncMongoUsersToZoho() {
+
   if (zohoSyncLock) {
     console.log("⚠️ ZOHO SYNC LOCKED");
 
@@ -1505,11 +1505,9 @@ async function syncMongoUsersToZoho() {
   zohoSyncLock = true;
 
   try {
+
     console.log("🚀 STARTING MONGODB -> ZOHO SYNC");
 
-    // =========================
-    // LEER USUARIOS DIRECTO DE MONGO
-    // =========================
     const mongoUsers = await User.find({});
 
     console.log(
@@ -1518,6 +1516,7 @@ async function syncMongoUsersToZoho() {
     );
 
     if (!Array.isArray(mongoUsers) || mongoUsers.length === 0) {
+
       console.log("⚠️ NO USERS FOUND IN MONGODB");
 
       return {
@@ -1531,11 +1530,10 @@ async function syncMongoUsersToZoho() {
     let zohoCount = 0;
     const errors = [];
 
-    // =========================
-    // RECORRER USUARIOS
-    // =========================
     for (const doc of mongoUsers) {
+
       try {
+
         console.log(
           "👤 MONGO USER:",
           doc?.email ||
@@ -1549,9 +1547,6 @@ async function syncMongoUsersToZoho() {
           continue;
         }
 
-        // =========================
-        // ENVIAR A ZOHO
-        // =========================
         console.log(
           "📡 SENDING USER TO ZOHO:",
           doc.email || doc.name
@@ -1567,6 +1562,7 @@ async function syncMongoUsersToZoho() {
         synced++;
 
         if (z?.ok) {
+
           zohoCount++;
 
           console.log(
@@ -1576,6 +1572,7 @@ async function syncMongoUsersToZoho() {
         }
 
         if (z?.error) {
+
           console.error(
             "❌ ZOHO ERROR:",
             z.error
@@ -1588,6 +1585,7 @@ async function syncMongoUsersToZoho() {
         }
 
       } catch (zohoErr) {
+
         console.error(
           "❌ USER SYNC CRASH:",
           zohoErr?.message || zohoErr
@@ -1600,9 +1598,6 @@ async function syncMongoUsersToZoho() {
       }
     }
 
-    // =========================
-    // RESULTADO FINAL
-    // =========================
     console.log("✅ FINAL MONGODB -> ZOHO RESULT:", {
       synced,
       zoho: zohoCount,
@@ -1617,6 +1612,7 @@ async function syncMongoUsersToZoho() {
     };
 
   } catch (err) {
+
     console.error(
       "❌ syncMongoUsersToZoho ERROR:",
       err?.message || err
@@ -1628,12 +1624,12 @@ async function syncMongoUsersToZoho() {
     };
 
   } finally {
+
     zohoSyncLock = false;
 
     console.log("🔓 ZOHO SYNC UNLOCKED");
   }
 }
-```
 
 
 async function syncSingleUserToZohoById(userId) {
