@@ -1436,16 +1436,51 @@ async function syncUserToZohoAndMark(userDoc) {
 
   } catch (err) {
 
+    const zohoMessage =
+      err?.response?.data?.data?.[0]?.message ||
+      err?.message ||
+      "";
+
+    if (
+      zohoMessage.includes(
+        "can't update the converted record"
+      )
+    ) {
+
+      console.log(
+        "⚠️ Registro convertido en Zoho, ignorando update:"
+      );
+
+      userDoc.zohoSyncStatus =
+        "synced";
+
+      userDoc.zohoLastError = "";
+
+      userDoc.zohoSyncedAt =
+        new Date();
+
+      await userDoc.save().catch(() => null);
+
+      return {
+        ok: true,
+        ignored: true,
+      };
+    }
+
     console.error(
       "❌ ZOHO SYNC ERROR:",
-      err?.message || err
+      JSON.stringify(
+        err?.response?.data ||
+        err?.message ||
+        err
+      )
     );
 
     userDoc.zohoSyncStatus =
       "error";
 
     userDoc.zohoLastError =
-      err?.message || String(err);
+      zohoMessage;
 
     userDoc.zohoSyncedAt =
       new Date();
@@ -1454,8 +1489,7 @@ async function syncUserToZohoAndMark(userDoc) {
 
     return {
       ok: false,
-      error:
-        err?.message || String(err),
+      error: zohoMessage,
     };
   }
 }
