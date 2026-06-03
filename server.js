@@ -3520,6 +3520,14 @@ app.use(cookieParser());
 
 app.use(express.static(path.join(__dirname, "public")));
 
+/* =========================
+   FILES (IMPORTANTE)
+========================= */
+app.use(
+  "/uploads",
+  express.static(path.join(__dirname, "uploads"))
+);
+
 /* ======================================================
    ROOT
 ====================================================== */
