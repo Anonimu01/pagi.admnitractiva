@@ -3103,7 +3103,7 @@ app.post(["/api/admin/withdraw", "/api/withdraw"], ensureAdminAuth, async (req, 
 ====================================================== */
 const storageDocuments = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, "uploads", "documents");
+   const dir = path.join(process.cwd(), "uploads", "documents"); // 👈 AQUÍ ESTÁ
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -3525,7 +3525,7 @@ app.use(express.static(path.join(__dirname, "public")));
 ========================= */
 app.use(
   "/uploads",
-  express.static(path.join(__dirname, "uploads"))
+  express.static(path.join(process.cwd(), "uploads"))
 );
 
 /* ======================================================
