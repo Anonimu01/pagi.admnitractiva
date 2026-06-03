@@ -3519,6 +3519,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 app.use(express.static(path.join(__dirname, "public")));
+app.use("/suben", express.static(path.join(process.cwd(), "uploads")));
+app.use("/sube", express.static(path.join(process.cwd(), "uploads")));
 
 /* =========================
    FILES (IMPORTANTE)
