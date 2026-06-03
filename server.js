@@ -3524,8 +3524,8 @@ app.use(express.static(path.join(__dirname, "public")));
    FILES (IMPORTANTE)
 ========================= */
 app.use(
-  "/uploads",
-  express.static(path.join(process.cwd(), "uploads"))
+  "/suben",
+  express.static(path.join(__dirname, "suben"))
 );
 
 /* ======================================================
