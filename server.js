@@ -927,20 +927,25 @@ async function getTargetUserForAdmin(req, res) {
 }
 
 
-               function formatInternationalPhone(phone, country = "US") {
+              function formatInternationalPhone(phone, country) {
   if (!phone) return null;
 
   try {
-    const parsed = parsePhoneNumberFromString(phone, country);
+    const parsed = parsePhoneNumberFromString(
+      phone,
+      country || undefined
+    );
 
     if (parsed && parsed.isValid()) {
-      return parsed.number; // ✔ perfecto E.164
+      return parsed.number;
     }
 
-    // 🔥 FALLBACK GLOBAL (NO PERDER LEAD)
-    return phone.startsWith("+") ? phone : `+${phone}`;
+    // 🔥 fallback para no perder leads
+    return phone.startsWith("+")
+      ? phone
+      : null;
+
   } catch (e) {
-    // 🔥 ULTIMO FALLBACK
     return phone;
   }
 }
@@ -1147,10 +1152,15 @@ function buildZohoPayload(
 
   const email = getUserEmail(userDoc);
 
- const phone = formatInternationalPhone(
-  getUserPhone(userDoc),
-  userDoc.country || "US"
-);
+const phoneRaw = getUserPhone(userDoc);
+
+const phone = phoneRaw
+  ? formatInternationalPhone(phoneRaw, userDoc.country || "US")
+  : null );
+    // 🔥 AQUÍ VA TU VALIDACIÓN
+  if (!email && !phone) {
+    throw new Error("Lead inválido: sin email ni teléfono");
+  }
 
   const address = getUserAddress(userDoc);
 
