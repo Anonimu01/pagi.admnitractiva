@@ -927,14 +927,22 @@ async function getTargetUserForAdmin(req, res) {
 }
 
 
-                function formatInternationalPhone(phone, country = "US") {
+               function formatInternationalPhone(phone, country = "US") {
   if (!phone) return null;
 
-  const parsed = parsePhoneNumberFromString(phone, country);
+  try {
+    const parsed = parsePhoneNumberFromString(phone, country);
 
-  if (!parsed || !parsed.isValid()) return null;
+    if (parsed && parsed.isValid()) {
+      return parsed.number; // ✔ perfecto E.164
+    }
 
-  return parsed.number;
+    // 🔥 FALLBACK GLOBAL (NO PERDER LEAD)
+    return phone.startsWith("+") ? phone : `+${phone}`;
+  } catch (e) {
+    // 🔥 ULTIMO FALLBACK
+    return phone;
+  }
 }
 
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
