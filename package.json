@@ -2,6 +2,7 @@
   "name": "admin-backend",
   "version": "1.0.0",
   "description": "Backend Admin Panel",
+  "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
