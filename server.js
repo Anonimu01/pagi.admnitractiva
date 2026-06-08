@@ -927,6 +927,36 @@ async function getTargetUserForAdmin(req, res) {
 }
 
 
+const { parsePhoneNumberFromString } = require("libphonenumber-js");
+
+function formatInternationalPhone(phone, country = "US") {
+  if (!phone) return null;
+
+  try {
+    const parsed = parsePhoneNumberFromString(phone, country);
+
+    if (parsed && parsed.isValid()) {
+      return parsed.number;
+    }
+
+    // 🔥 fallback seguro (NO perder leads)
+    if (phone.startsWith("+")) {
+      return phone;
+    }
+
+    // 🔥 último intento: limpiar y devolver
+    const cleaned = phone.replace(/\D/g, "");
+    return cleaned ? `+${cleaned}` : null;
+
+  } catch (e) {
+    const cleaned = phone?.replace(/\D/g, "");
+    return cleaned ? `+${cleaned}` : null;
+  }
+}
+
+
+
+               
 
 /* ======================================================
    ZOHO
@@ -1122,10 +1152,11 @@ const phoneRaw = getUserPhone(userDoc);
 const phone = phoneRaw
   ? formatInternationalPhone(phoneRaw, userDoc.country || "US")
   : null;
-    // 🔥 AQUÍ VA TU VALIDACIÓN
-  if (!email && !phone) {
-    throw new Error("Lead inválido: sin email ni teléfono");
-  }
+
+// opcional: log para detectar fallos
+if (!phone && phoneRaw) {
+  console.warn("⚠️ PHONE NO PARSEABLE:", phoneRaw, userDoc.country);
+}
 
   const address = getUserAddress(userDoc);
 
