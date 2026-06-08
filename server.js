@@ -926,6 +926,20 @@ async function getTargetUserForAdmin(req, res) {
   return null;
 }
 
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
+
+function formatInternationalPhone(phone, defaultCountry = "US") {
+  if (!phone) return null;
+
+  const parsed = parsePhoneNumberFromString(phone, defaultCountry);
+
+  if (!parsed || !parsed.isValid()) {
+    return null; // o lo rechazas
+  }
+
+  return parsed.number; // formato E.164 (+573001234567)
+}
+
 /* ======================================================
    ZOHO
 ====================================================== */
@@ -1851,6 +1865,33 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 /* ======================================================
    AUTH
 ====================================================== */
+
+app.post("/api/leads", async (req, res) => {
+  const body = req.body;
+
+  const phone = formatInternationalPhone(
+    body.phone,
+    body.country || "US"
+  );
+
+  if (!phone) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid phone number"
+    });
+  }
+
+  const lead = {
+    Name: body.name,
+    Phone: phone
+  };
+
+  await zoho.createRecord("Leads", lead);
+
+  res.json({ ok: true });
+});
+
+
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
     const { email, password } = req.body || {};
