@@ -1156,7 +1156,7 @@ const phoneRaw = getUserPhone(userDoc);
 
 const phone = phoneRaw
   ? formatInternationalPhone(phoneRaw, userDoc.country || "US")
-  : null );
+  : null;
     // 🔥 AQUÍ VA TU VALIDACIÓN
   if (!email && !phone) {
     throw new Error("Lead inválido: sin email ni teléfono");
