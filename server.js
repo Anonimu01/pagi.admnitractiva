@@ -1883,30 +1883,28 @@ async function depositByDelta(req, res, userId, desiredBalance, leverage, note) 
 ====================================================== */
 
 app.post("/api/leads", async (req, res) => {
-  const body = req.body;
+  const body = req.body || {};
 
   const phone = formatInternationalPhone(
     body.phone,
     body.country || "US"
   );
 
-  if (!phone) {
-    return res.status(400).json({
-      ok: false,
-      error: "Invalid phone number"
-    });
-  }
-
   const lead = {
-    Name: body.name,
-    Phone: phone
+    First_Name: body.name || "Cliente",
+    Last_Name: body.lastName || "SinApellido",
+    Phone: phone || undefined,
+    Email: body.email || undefined
   };
 
-  await zoho.createRecord("Leads", lead);
-
-  res.json({ ok: true });
+  try {
+    await zoho.createRecord("Leads", lead);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("ZOHO ERROR:", err);
+    res.status(500).json({ ok: false, error: "Zoho failed" });
+  }
 });
-
 
 app.post(["/api/admin/login", "/api/login"], async (req, res) => {
   try {
