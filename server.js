@@ -926,6 +926,17 @@ async function getTargetUserForAdmin(req, res) {
   return null;
 }
 
+
+                function formatInternationalPhone(phone, country = "US") {
+  if (!phone) return null;
+
+  const parsed = parsePhoneNumberFromString(phone, country);
+
+  if (!parsed || !parsed.isValid()) return null;
+
+  return parsed.number;
+}
+
 const { parsePhoneNumberFromString } = require('libphonenumber-js');
 function formatInternationalPhone(phone, defaultCountry = "US") {
   if (!phone) return null;
@@ -1128,7 +1139,10 @@ function buildZohoPayload(
 
   const email = getUserEmail(userDoc);
 
-  const phone = getUserPhone(userDoc);
+ const phone = formatInternationalPhone(
+  getUserPhone(userDoc),
+  userDoc.country || "US"
+);
 
   const address = getUserAddress(userDoc);
 
