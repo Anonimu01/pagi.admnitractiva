@@ -927,27 +927,7 @@ async function getTargetUserForAdmin(req, res) {
 }
 
 
-const { parsePhoneNumberFromString } = require("libphonenumber-js");
 
-function formatInternationalPhone(phone, country = "US") {
-  if (!phone) return null;
-
-  try {
-    const parsed = parsePhoneNumberFromString(phone, country);
-
-    if (parsed && parsed.isValid()) {
-      return parsed.number; // +E.164 correcto
-    }
-
-    // 🔥 fallback para no perder leads
-    return phone.startsWith("+")
-      ? phone
-      : null;
-
-  } catch (e) {
-    return phone;
-  }
-}
 /* ======================================================
    ZOHO
 ====================================================== */
