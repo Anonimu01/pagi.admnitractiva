@@ -927,17 +927,16 @@ async function getTargetUserForAdmin(req, res) {
 }
 
 
-              function formatInternationalPhone(phone, country) {
+const { parsePhoneNumberFromString } = require("libphonenumber-js");
+
+function formatInternationalPhone(phone, country = "US") {
   if (!phone) return null;
 
   try {
-    const parsed = parsePhoneNumberFromString(
-      phone,
-      country || undefined
-    );
+    const parsed = parsePhoneNumberFromString(phone, country);
 
     if (parsed && parsed.isValid()) {
-      return parsed.number;
+      return parsed.number; // +E.164 correcto
     }
 
     // 🔥 fallback para no perder leads
@@ -949,20 +948,6 @@ async function getTargetUserForAdmin(req, res) {
     return phone;
   }
 }
-
-const { parsePhoneNumberFromString } = require('libphonenumber-js');
-function formatInternationalPhone(phone, defaultCountry = "US") {
-  if (!phone) return null;
-
-  const parsed = parsePhoneNumberFromString(phone, defaultCountry);
-
-  if (!parsed || !parsed.isValid()) {
-    return null; // o lo rechazas
-  }
-
-  return parsed.number; // formato E.164 (+573001234567)
-}
-
 /* ======================================================
    ZOHO
 ====================================================== */
