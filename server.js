@@ -926,8 +926,7 @@ async function getTargetUserForAdmin(req, res) {
   return null;
 }
 
-import { parsePhoneNumberFromString } from 'libphonenumber-js';
-
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 function formatInternationalPhone(phone, defaultCountry = "US") {
   if (!phone) return null;
 
